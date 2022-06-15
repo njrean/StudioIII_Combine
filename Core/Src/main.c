@@ -68,7 +68,7 @@ uint8_t trigger = 0;
 float Rads = 0;
 float angle = 0;
 float angle_before = 0;
-float angle_sum = 0;			//angle sum of robot arm
+float theta_now = 0;			//angle sum of robot arm
 float angle_sum_before = 0;
 float angle_base_before = 0;
 float angle_base = 0;
@@ -131,17 +131,21 @@ float tj = 0;
 float ta = 0;
 float tv = 0;
 	//Variable of Trajectory
-double w_max = M_PI/3;		//omega max (rad/s)
-double a_max = 0.5;			//alpha max (rad/s^2)
+double w_max = M_PI/3;		//omega_ref max (rad/s)
+double a_max = 0.5;			//alpha_ref max (rad/s^2)
 double j_max = 0.5;			//jerk max	(rad/s^3)
-double theta_0 = 0;			//theta now (rad)
-double theta_f = 3.0*M_PI/2.0;	//theta want to go (rad)
-double theta_dest = 0;		//theta relative between theta_0 and theta_f (rad)
+double theta_0 = 0;			//theta_ref now (rad)
+double theta_f = 2.57; //3.0*M_PI/2.0;	//theta_ref want to go (rad)
+double theta_dest = 0;		//theta_ref relative between theta_0 and theta_f (rad)
+
+static float a[6];
+static float v[6];
+static float p[6];
 
 	//Trajectory Reference
-static double theta = 0;
-static double omega = 0;
-static float alpha = 0;
+static double theta_ref = 0;
+static double omega_ref = 0;
+static float alpha_ref = 0;
 
 //Cascade Position and Velocity
 static float e1 = 0;
@@ -192,7 +196,7 @@ void SetHome();
 //Read Encoder and Unwrap
 void Unwrap();
 
-//Estimate omega From Encoder's data to be sensor data in Kalman Filter
+//Estimate omega_ref From Encoder's data to be sensor data in Kalman Filter
 void BackwardDifference();
 
 //Kalman Filter
@@ -315,7 +319,7 @@ int main(void)
 	 		 angle_base_before = 0;
 	 		 angle_base =0;
 	 		 angle_sum_before = 0;
-	 		 angle_sum = 0;
+	 		 theta_now = 0;
 	 		 Go_Flag = 1; //go!!
 	 		 //GenVolt_Flag = 1;//gen volt
 	 		 ArmState = Defualt;
@@ -729,7 +733,7 @@ void RunMotor(uint8_t volt, uint8_t direction)
 void Unwrap()
 {
 	angle_before = angle;
-	angle_sum_before = angle_sum;
+	angle_sum_before = theta_now;
 
 	angle = (TIM3->CNT/8191.0)*(2*M_PI);
 	angle_base_before = angle_base;
@@ -747,12 +751,12 @@ void Unwrap()
 		angle_base = angle_base_before;
 	}
 
-	angle_sum = angle + angle_base;
+	theta_now = angle + angle_base;
 }
 
 void BackwardDifference()
 {
-	omega_tosensor = (angle_sum-angle_sum_before)/dt;
+	omega_tosensor = (theta_now-angle_sum_before)/dt;
 }
 
 void SetHome()
@@ -772,7 +776,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	{
 		volt = 0;
 		RunMotor(volt, clockwise);
-		angle_sum = 0;
+		theta_now = 0;
 		AlSet_Flag = 1;
 		ArmState = FinishSetHome;
 	}
@@ -801,7 +805,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		BackwardDifference();
 		TrajectoryEvaluation();
 		kalmanfilter();
-		volt = Cascade(theta, position_kalman, omega, omega_kalman);
+		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
 		RunMotor(volt, PID_dir);
 		t+=dt;
 		trigger = 1;
@@ -928,7 +932,7 @@ void update(){
 	arm_mat_sub_f32(&I, &mult3x3, &mult3x3);
 	arm_mat_mult_f32(&mult3x3, &P_new, &P);
 
-	//data_input[0] = angle_sum;
+	//data_input[0] = theta_now;
 	data_input[0] = omega_tosensor;
 
 	//y_old = multiply(C, x_new);
@@ -946,7 +950,7 @@ void kalmanfilter()
 {
 	prediction();
 	update();
-	position_kalman = angle_sum;
+	position_kalman = theta_now;
 	omega_kalman = data_x_new[1];
 	alpha_kalman = data_x_new[2];
 	jerk_kalman = data_x_new[3];
@@ -962,7 +966,7 @@ void TrajectoryGenerator()
 		static float Sa;
 		static float Sv;
 
-		theta_0 = angle_sum;
+		theta_0 = theta_now;
 
 		theta_dest = theta_f - theta_0;
 
@@ -1032,56 +1036,103 @@ void TrajectoryGenerator()
 		t6 = tv + ta;
 		t7 = tv + tj + ta;
 
-		theta = theta_0;
-		omega = 0;
-		alpha = 0;
+		theta_ref = theta_0;
+		omega_ref = 0;
+		alpha_ref = 0;
+
+		p[0] = (1.0/6.0)*j_max*pow(t1,3.0);
+		v[0] = 0.5*j_max*pow(t1,2.0);
+		a[0] = j_max*t1;
+
+		p[1] = p[0] + v[0]*(t2-t1) + 0.5*a[0]*pow((t2-t1),2.0);
+		v[1] = v[0] + a[0]*(t2-t1);
+		a[1] = a[0];
+
+		p[2] = p[1] + v[1]*(t3-t2) + 0.5*a[1]*pow((t3-t2),2.0) - j_max*pow((t3-t2),3.0)/6.0;
+		v[2] = v[1] + a[1]*(t3-t2) - 0.5*j_max*pow((t3-t2),2.0);
+		a[2] = a[1] - j_max*(t3-t2);
+
+		p[3] = p[2] + v[2]*(t4-t3);
+		v[3] = v[2];
+		a[3] = a[2];
+
+		p[4] = p[3] + v[3]*(t5-t4) - j_max*pow((t5-t4),3.0)/6.0;
+		v[4] = v[3] - 0.5*j_max*pow((t5-t4),2.0);
+		a[4] = a[3]- j_max*(t5-t4);
+
+		p[5] = p[4] + v[4]*(t6-t5) + 0.5*(a[4])*pow((t6-t5),2.0);
+		v[5] = v[4] + a[4]*(t6-t5);
+		a[5] = a[4];
 	}
 }
 
 void TrajectoryEvaluation()
 {
+
+
 	if( 0 <= t && t < t1){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0) + j_max*pow(dt,3.0)/6.0;
-		omega = omega + alpha*dt + 0.5*j_max*pow(dt,2.0);
-		alpha = alpha + j_max*dt;
+		theta_ref = (1.0/6.0)*j_max*pow(t,3.0);
+		omega_ref = 0.5*j_max*pow(t,2.0);
+		alpha_ref = j_max*t;
+
 	}
 	else if (t1 <= t && t< t2){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0);
-		omega = omega + alpha*dt;
-		alpha = alpha;
+		theta_ref = p[0] + v[0]*(t-t1) + 0.5*a[0]*pow((t-t1),2.0);
+		omega_ref = v[0] + a[0]*(t-t1);
+		alpha_ref = a[0];
+//		p[1] = p[0] + v[0]*(t2) + 0.5*a[0]*pow((t2),2.0);
+//		v[1] = v[0] + a[0]*(t2);
+//		a[1] = a_max;
 	}
 	else if (t2 <= t && t < t3){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0) - j_max*pow(dt,3.0)/6.0;
-		omega = omega + alpha*dt - 0.5*j_max*pow(dt,2.0);
-		alpha = alpha - j_max*dt;
+		theta_ref = p[1] + v[1]*(t-t2) + 0.5*a_max*pow((t-t2),2.0) - j_max*pow((t-t2),3.0)/6.0;
+		omega_ref = v[1] + a_max*(t-t2) - 0.5*j_max*pow((t-t2),2.0);
+		alpha_ref = a_max - j_max*(t-t2);
+//		p[2] = p[1] + v[1]*(t3) + 0.5*a[1]*pow((t3),2.0) - j_max*pow((t3),3.0)/6.0;
+//		v[2] = v[1] + a[1]*(t3) - 0.5*j_max*pow((t3),2.0);
+//		a[2] = a[1] - j_max*(t3);
 	}
 	else if (t3 <= t && t < t4 ){
-		theta = theta + omega*dt;
-		omega = omega;
-		alpha = 0;
+		theta_ref = p[2] + w_max*(t-t3);
+		omega_ref = w_max;
+		alpha_ref = 0;
+//		p[3] = p[2] + v[2]*(t4);
+//		v[3] = w_max;
+//		a[3] = 0;
 	}
 	else if (t4 <= t && t < t5 ){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0) - j_max*pow(dt,3.0)/6.0;
-		omega = omega + alpha*dt - 0.5*j_max*pow(dt,2.0);
-		alpha = alpha - j_max*dt;
+		theta_ref = p[3] + v[3]*(t-t4) - j_max*pow((t-t4),3.0)/6.0;
+		omega_ref = v[3] - 0.5*j_max*pow((t-t4),2.0);
+		alpha_ref = - j_max*(t-t4);
+//		p[4] = p[3] + v[3]*(t5) - j_max*pow((t5),3.0)/6.0;
+//		v[4] = v[3] - 0.5*j_max*pow((t5),2.0);
+//		a[4] = - j_max*(t5);
 
 	}
 	else if (t5 <= t && t < t6 ){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0);
-		omega = omega + alpha*dt;
-		alpha = alpha;
+		theta_ref = p[4] + v[4]*(t-t5) + 0.5*(-a_max)*pow((t-t5),2.0);
+		omega_ref = v[4] + -a_max*(t-t5);
+		alpha_ref = -a_max;
+//		p[5] = p[4] + v[4]*(t6) + 0.5*(-a_max)*pow((t6),2.0);
+//		v[5] = v[4] + -a_max*(t6);
+//		a[5] = -a_max;
 	}
 	else if (t6 <= t && t < t7 ){
-		theta = theta + omega*dt + 0.5*alpha*pow(dt,2.0) + j_max*pow(dt,3.0)/6.0;
-		omega = omega + alpha*dt + 0.5*j_max*pow(dt,2.0);
-		alpha = alpha + j_max*dt;
+		theta_ref = p[5] + v[5]*(t-t6) + 0.5*a[5]*pow((t-t6),2.0) + j_max*pow((t-t6),3.0)/6.0;
+		omega_ref = v[5] + a[5]*(t-t6) + 0.5*j_max*pow((t-t6),2.0);
+		alpha_ref = a[5] + j_max*(t-t6);
 	}
-	else if (t7+2 <= t ){
-		theta = theta_f;
-		omega = omega;
-		alpha = alpha;
+	else if (t7 <= t ){
+		theta_ref = theta_f;
+		omega_ref = omega_ref;
+		alpha_ref = alpha_ref;
 		t = 0;
 		Go_Flag = 0;
+		for(int i = 0;i<6;i++){
+			a[i]=0;
+			v[i]=0;
+			p[i]=0;
+		}
 		ArmState = FinishPID;
 	}
 }
