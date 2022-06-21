@@ -43,7 +43,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -57,6 +57,7 @@ DMA_HandleTypeDef hdma_usart2_tx;
 /* USER CODE BEGIN PV */
 //Run Motor
 float volt = 0;
+float volt_check = 0;
 
 //Set Flag and Status
 uint8_t SetHome_Flag = 0;
@@ -108,9 +109,9 @@ arm_matrix_instance_f32 P_new;
 float32_t data_I[16] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
 float32_t data_A[16];
 float32_t data_G[4];
-float32_t data_C[4] = {0,1,0,0};
-float32_t data_R[1] = {14500};
-float32_t data_Q[1] = {1};
+float32_t data_C[4] = {1,0,0,0};
+float32_t data_R[1] = {0.145};
+float32_t data_Q[1] = {0.01};
 float32_t data_input[1] = {0};
 float32_t data_K[4] = {0,0,0,0};
 float32_t data_x[4] = {0,0,0,0};
@@ -138,7 +139,7 @@ double w_max = M_PI/3;		//omega_ref max (rad/s)
 double a_max = 0.5;			//alpha_ref max (rad/s^2)
 double j_max = 0.5;			//jerk max	(rad/s^3)
 double theta_0 = 0;			//theta_ref now (rad)
-double theta_f = 2.57; //3.0*M_PI/2.0;	//theta_ref want to go (rad)
+double theta_f = 0; 		//theta_ref want to go (rad)
 double theta_dest = 0;		//theta_ref relative between theta_0 and theta_f (rad)
 
 static float a[6];
@@ -160,13 +161,12 @@ static float e2 = 0;
 static float s2 = 0;
 static float u2 = 0;
 
-float kp_1 = 0.000001;
-float ki_1 = 0.0000056;
+float kp_1 = 0;
+float ki_1 = 0;
 float kd_1 = 0;
 
 float kp_2 = 0.005;
 float ki_2 = 0.03;
-
 
 //UART Variable
 uint8_t RxData[15];
@@ -207,7 +207,6 @@ static enum
 	State_wait
 } EndEffector_State = State_wait;
 
-
 //For Experiment
 uint32_t timestamp = 0;
 uint8_t dir = 1;
@@ -233,7 +232,7 @@ static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 //Run Motor
-void RunMotor(uint8_t volt, uint8_t direction);
+void RunMotor(float volt, uint8_t direction);
 
 //Set Home
 void SetHome();
@@ -258,6 +257,11 @@ void TrajectoryEvaluation();
 float PositionController(float r,float y);
 float VelocityController(float r,float y,float uP);
 float Cascade(float Pd,float P,float Vd,float V);
+
+//Function For Operation
+float positive(float var);
+float negative(float var);
+float limit(float var1, float var2);
 
 //volt Generator for Experiment Tune Kalman Filter
 void genvolt();
@@ -315,8 +319,11 @@ int main(void)
   MX_TIM4_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+
+  //Set Matrix for Kalman Filter
   HAL_Delay(200);
   setmatrix();
+
   //PWM start
   HAL_TIM_Base_Start(&htim1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -327,12 +334,11 @@ int main(void)
   //Timer to Read Encoder
   HAL_TIM_Base_Start_IT(&htim4);
 
-  //Set Matrix for Kalman Filter
-
-  //
-  HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
-
+  //Timer for micro
   HAL_TIM_Base_Start_IT(&htim11);
+
+  //Close Yellow Pilot Lamp
+  HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
 
   /* USER CODE END 2 */
 
@@ -344,7 +350,8 @@ int main(void)
 	 {
 	 case Main:
 		 UART();
-		 Finish =0;
+		 Finish = 0;
+		 Unwrap();
 		 break;
 	 case Run:
 		 UART();
@@ -352,8 +359,8 @@ int main(void)
 			 if(Go_Flag==0){
 				 TrajectoryGenerator_Flag=1;
 				 TrajectoryGenerator();
-
 			 }
+
 			 else if(Go_Flag==1){
 				 if(theta_ref == theta_f){
 					 Go_Flag =0;
@@ -401,9 +408,9 @@ int main(void)
 		 Finish=0;
 		 UART();
 		 SetHome();
-		Unwrap();
-		BackwardDifference();
-		kalmanfilter();
+		 Unwrap();
+		 BackwardDifference();
+		 kalmanfilter();
 		 break;
 	 case Setzero:
 		 UART();
@@ -438,7 +445,6 @@ int main(void)
 	 default:
 		 state =Main;
 		 break;
-
 	 }
 
 
@@ -919,51 +925,64 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void RunMotor(uint8_t volt, uint8_t direction)
+void RunMotor(float volt, uint8_t direction)
 {
 	static float PWMOut = 0;
+
+	if (volt >= 0)
+	{
+		PID_dir = 1;
+	}
+
+	else
+	{
+		volt = -volt;
+		PID_dir = 0;
+	}
+
 	if (Emergency_status == 1)
 	{
 		volt = 0;
 	}
 
-	if (volt == 0)
-	{
-		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
-	}
+//	if (volt == 0)
+//	{
+//		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
+//	}
+//
+//	else
+//	{
+//		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_RESET);
+//	}
 
-	else
-	{
-		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_RESET);
-	}
-
-	PWMOut = (volt*5000)/24;
-	HAL_GPIO_WritePin(Motor_DIR_GPIO_Port, Motor_DIR_Pin, direction);
+	PWMOut = (volt*5000.0)/24.0;
+	HAL_GPIO_WritePin(Motor_DIR_GPIO_Port, Motor_DIR_Pin, PID_dir);
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMOut);
 }
 
 void Unwrap()
 {
-	angle_before = angle;
-	angle_sum_before = theta_now;
-
-	angle = (TIM3->CNT/8191.0)*(2*M_PI);
-	angle_base_before = angle_base;
-
-	if ((angle - angle_before) <= -threshold)
-	{
-		angle_base = angle_base_before + angle_max;
-	}
-	else if ((angle - angle_before) >= threshold)
-	{
-		angle_base = angle_base_before - angle_max;
-	}
-	else
-	{
-		angle_base = angle_base_before;
-	}
-
-	theta_now = angle + angle_base;
+//	angle_before = angle;
+//	angle_sum_before = theta_now;
+//
+//	angle = (TIM3->CNT/8191.0)*(2.0*M_PI);
+//	angle_base_before = angle_base;
+//
+//	if ((angle - angle_before) <= -threshold)
+//	{
+//		angle_base = angle_base_before + angle_max;
+//	}
+//	else if ((angle - angle_before) >= threshold)
+//	{
+//		angle_base = angle_base_before - angle_max;
+//	}
+//	else
+//	{
+//		angle_base = angle_base_before;
+//	}
+//
+//	theta_now = angle + angle_base;
+	theta_now = (TIM3->CNT/8191.0)*(2.0*M_PI);
 }
 
 void BackwardDifference()
@@ -975,7 +994,7 @@ void SetHome()
 {
 	if(SetHome_Flag == 1)
 	{
-		volt = 10;
+		volt = 5;
 		RunMotor(volt, clockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
@@ -1025,10 +1044,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		TrajectoryEvaluation();
 		kalmanfilter();
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
+		volt_check = volt;
 		RunMotor(volt, PID_dir);
 		t+=dt;
 		trigger = 1;
 	}
+
 	if (htim == &htim11)
 	{
 		_micro += 65535;
@@ -1156,7 +1177,7 @@ void update(){
 	arm_mat_mult_f32(&mult3x3, &P_new, &P);
 
 	//data_input[0] = theta_now;
-	data_input[0] = omega_tosensor;
+	data_input[0] = theta_now;
 
 	//y_old = multiply(C, x_new);
 	arm_mat_mult_f32(&C, &x_new, &y_old);
@@ -1183,38 +1204,44 @@ void TrajectoryGenerator()
 {	if(TrajectoryGenerator_Flag)
 	{
 		//Variable For Consider Case
-		static uint8_t M;
-		static uint8_t N;
+		static float M;
+		static float N;
 		static float Va;
 		static float Sa;
 		static float Sv;
+
+		ta = 0;
+		tv = 0;
+		tj = 0;
 
 		theta_0 = theta_now;
 
 		theta_dest = theta_f - theta_0;
 
-		if(theta_dest<0){
-			theta_dest = -theta_dest;
-			dir=0;
-			PID_dir=0;
-		}
-		else{
-			dir=1;
-			PID_dir=1;
+		if(theta_dest < 0)
+		{
+			theta_dest = -(theta_dest);
+			dir = 0;
 		}
 
-		if(w_max*j_max < pow(a_max,2)){
-			M=1;
-			N=0;
-		}
-		else if(w_max*j_max >= pow(a_max,2)){
-			M=0;
-			N=1;
+		else
+		{
+			dir = 1;
 		}
 
-		Va = pow(a_max,2)/j_max;
-		Sa = (2*pow(a_max,3))/(pow(j_max,2));
-		Sv = w_max*(M*(2*sqrt(w_max/j_max))+N*((w_max/a_max)+(a_max/j_max)));
+		if(w_max*j_max < pow(a_max,2.0)){
+			M=1.0;
+			N=0.0;
+		}
+
+		else if(w_max*j_max >= pow(a_max,2.0)){
+			M=0.0;
+			N=1.0;
+		}
+
+		Va = pow(a_max,2.0)/j_max;
+		Sa = (2.0*pow(a_max,3.0))/(pow(j_max,2.0));
+		Sv = w_max*(M*(2.0*sqrt(w_max/j_max))+N*((w_max/a_max)+(a_max/j_max)));
 
 		if(w_max < Va){
 			if(theta_dest > Sa){
@@ -1226,9 +1253,9 @@ void TrajectoryGenerator()
 			else if(theta_dest < Sa){
 				if(theta_dest < Sv){
 					//caseIV
-					tj = pow((theta_dest/(2*j_max)),0.33);
+					tj = pow((theta_dest/(2.0*j_max)),0.3333);
 					ta = tj;
-					tv = 2*tj;
+					tv = 2.0*tj;
 				}
 				else if(theta_dest > Sv){
 					//caseIII
@@ -1238,21 +1265,21 @@ void TrajectoryGenerator()
 				}
 			}
 		}
-		else if(w_max > Va){
+		else if(w_max >= Va){
 			if(theta_dest < Sa){
 				//caseII
-				tj = pow((theta_dest/(2*j_max)),0.33);
+				tj = pow((theta_dest/(2.0*j_max)),0.3333);
 				ta = tj;
-				tv = 2*tj;
+				tv = 2.0*tj;
 			}
-			else if(theta_dest > Sa){
+			else if(theta_dest >= Sa){
 				if(theta_dest < Sv){
 					//caseVI
 					tj = a_max/j_max;
-					ta = 0.5*(sqrt(((4*theta_dest*pow(j_max,2))+pow(a_max,3))/(a_max*pow(j_max,2)))-(a_max/j_max));
+					ta = 0.5*(sqrt(((4.0*theta_dest*pow(j_max,2.0))+pow(a_max,3.0))/(a_max*pow(j_max,2.0)))-(a_max/j_max));
 					tv = ta + tj;
 				}
-				else if(theta_dest > Sv){
+				else if(theta_dest >= Sv){
 					//caseV
 					tj = a_max/j_max;
 					ta = w_max/a_max;
@@ -1272,6 +1299,20 @@ void TrajectoryGenerator()
 		theta_ref = theta_0;
 		omega_ref = 0;
 		alpha_ref = 0;
+
+		if (dir == 0)
+		{
+			j_max = negative(j_max);
+			a_max = negative(a_max);
+			w_max = negative(w_max);
+		}
+
+		else
+		{
+			j_max = positive(j_max);
+			a_max = positive(a_max);
+			w_max = positive(w_max);
+		}
 
 		p[0] = (1.0/6.0)*j_max*pow(t1,3.0);
 		v[0] = 0.5*j_max*pow(t1,2.0);
@@ -1314,84 +1355,40 @@ void TrajectoryGenerator()
 
 void TrajectoryEvaluation()
 {
-
-
 	if( 0 <= t && t < t1){
-		theta_ref = (1.0/6.0)*j_max*pow(t,3.0);
+		theta_ref = theta_0 + (1.0/6.0)*j_max*pow(t,3.0);
 		omega_ref = 0.5*j_max*pow(t,2.0);
 		alpha_ref = j_max*t;
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
 	}
 	else if (t1 <= t && t< t2){
-		theta_ref = p[0] + v[0]*(t-t1) + 0.5*a[0]*pow((t-t1),2.0);
+		theta_ref = theta_0 + p[0] + v[0]*(t-t1) + 0.5*a[0]*pow((t-t1),2.0);
 		omega_ref = v[0] + a[0]*(t-t1);
 		alpha_ref = a[0];
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
 	}
 	else if (t2 <= t && t < t3){
-		theta_ref = p[1] + v[1]*(t-t2) + 0.5*a_max*pow((t-t2),2.0) - j_max*pow((t-t2),3.0)/6.0;
-		omega_ref = v[1] + a_max*(t-t2) - 0.5*j_max*pow((t-t2),2.0);
-		alpha_ref = a_max - j_max*(t-t2);
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
+		theta_ref = theta_0 + p[1] + v[1]*(t-t2) + 0.5*a[1]*pow((t-t2),2.0) - j_max*pow((t-t2),3.0)/6.0;
+		omega_ref = v[1] + a[1]*(t-t2) - 0.5*j_max*pow((t-t2),2.0);
+		alpha_ref = a[1] - j_max*(t-t2);
 	}
 	else if (t3 <= t && t < t4 ){
-		theta_ref = p[2] + w_max*(t-t3);
-		omega_ref = w_max;
+		theta_ref = theta_0 + p[2] + v[2]*(t-t3);
+		omega_ref = v[2];
 		alpha_ref = 0;
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
 	}
 	else if (t4 <= t && t < t5 ){
-		theta_ref = p[3] + v[3]*(t-t4) - j_max*pow((t-t4),3.0)/6.0;
+		theta_ref = theta_0 + p[3] + v[3]*(t-t4) - j_max*pow((t-t4),3.0)/6.0;
 		omega_ref = v[3] - 0.5*j_max*pow((t-t4),2.0);
-		alpha_ref = - j_max*(t-t4);
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
+		alpha_ref = -j_max*(t-t4);
 	}
 	else if (t5 <= t && t < t6 ){
-		theta_ref = p[4] + v[4]*(t-t5) + 0.5*(-a_max)*pow((t-t5),2.0);
-		omega_ref = v[4] + -a_max*(t-t5);
-		alpha_ref = -a_max;
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
+		theta_ref = theta_0 + p[4] + v[4]*(t-t5) + 0.5*a[4]*pow((t-t5),2.0);
+		omega_ref = v[4] + a[4]*(t-t5);
+		alpha_ref = a[4];
 	}
 	else if (t6 <= t && t < t7 ){
-		theta_ref = p[5] + v[5]*(t-t6) + 0.5*a[5]*pow((t-t6),2.0) + j_max*pow((t-t6),3.0)/6.0;
+		theta_ref = theta_0 + p[5] + v[5]*(t-t6) + 0.5*a[5]*pow((t-t6),2.0) + j_max*pow((t-t6),3.0)/6.0;
 		omega_ref = v[5] + a[5]*(t-t6) + 0.5*j_max*pow((t-t6),2.0);
 		alpha_ref = a[5] + j_max*(t-t6);
-		if(dir==1){
-			theta_ref = theta_ref + theta_0;
-		}
-		else if(dir==0){
-			theta_ref = theta_0 - theta_ref;
-		}
 	}
 	else if (t7 <= t ){
 		theta_ref = theta_f;
@@ -1405,7 +1402,7 @@ float PositionController(float r,float y) //r == trajectory, y==feedback
 {
 	e1 = r - y;
 	s1 = s1 + e1;
-	u1 = kp_1*e1 + ki_1*s1 + kd_1*(e1-p1);
+	u1 = (kp_1*e1) + (ki_1*s1) + (kd_1*(e1-p1));
 	p1 = e1;
 	return u1;
 }
@@ -1413,39 +1410,62 @@ float PositionController(float r,float y) //r == trajectory, y==feedback
 float VelocityController(float r,float y,float uP)
 {
 	e2 = uP + r;
-	if(e2 >= w_max){
+	if(e2 >= w_max)
+	{
 		e2 = w_max;
 	}
+
+	else if (e2 <= -w_max)
+	{
+		e2 = -w_max;
+	}
+
 	e2 = e2 - y;
 	s2 = s2 + e2;
-	u2 = kp_2*e2 + ki_2*s2;
+	u2 = (kp_2*e2) + (ki_2*s2);
 	return u2;
 }
 
 float Cascade(float Pd,float P,float Vd,float V){
 	static float u;
-	float add = 2;
+	static float add = 2.0;
 	u = PositionController(Pd, P);
 	u = VelocityController(Vd, V, u);
-//	PID_dir = 1;
-	if(u > 24){
-		u = 24;
-		PID_dir =1;
-	}
-	else if (u < 0){
-		u = -(u);
-		PID_dir = 0;
-	}
-	else{
-		PID_dir = 1;
-	}
 
 	if(t >= t5)
 	{
 		add = 0;
 	}
 
-	return u+add;
+	return limit(u, add);
+}
+
+float negative(float var)
+{
+	if (var > 0){
+		var = -var;
+	}
+	return var;
+}
+
+float positive(float var)
+{
+	if (var < 0){
+			var = -var;
+		}
+	return var;
+}
+
+float limit(float var1, float var2)
+{
+	if (var1 >= 0)
+	{
+		return (var1 > 24.0-var2) ? 24.0 : var1+var2;
+	}
+	else if (var1 < 0)
+	{
+		return (var1 < -24.0+var2) ? -24.0 : var1-var2;
+	}
 }
 
 void genvolt()
@@ -1756,7 +1776,6 @@ void UART(){
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 			Timestamp_UI=micros();
 			Check9=0;
-
 		}
 		else{
 			if(micros() - Timestamp_UI > 150){
