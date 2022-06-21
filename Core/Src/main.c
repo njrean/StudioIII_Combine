@@ -43,7 +43,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
+ I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -68,7 +68,7 @@ uint8_t GenVolt_Flag = 0;
 uint8_t Emergency_status = 0;
 uint8_t trigger = 0;
 
-//Unwrap
+//ReadEncoder
 float Rads = 0;
 float angle = 0;
 float angle_before = 0;
@@ -166,7 +166,7 @@ float ki_1 = 0;
 float kd_1 = 0;
 
 float kp_2 = 0.005;
-float ki_2 = 0.03;
+float ki_2 = 0.01;
 
 //UART Variable
 uint8_t RxData[15];
@@ -189,8 +189,8 @@ uint8_t index_station[16];
 uint8_t n_station_max=1;
 uint8_t n_station=1;
 
-enum {Run, Home, EndEffector, Emergency, Main, Setzero
-}state = Main;
+enum {Run, Home, EndEffector, Emergency, Main, Setzero, PrepareRun
+}Arm_State = Main;
 
 //EndEffector
 uint8_t FlagOpen_EndEffector = 0;
@@ -214,8 +214,7 @@ uint8_t PID_dir = 1;
 //static uint8_t state = 0;
 static float tt = 0;
 
-enum {Defualt, RunSetHome, WaitSetHome, FinishSetHome, PreparePID, RunPID, FinishPID
-}ArmState = Defualt;
+
 
 /* USER CODE END PV */
 
@@ -237,8 +236,8 @@ void RunMotor(float volt, uint8_t direction);
 //Set Home
 void SetHome();
 
-//Read Encoder and Unwrap
-void Unwrap();
+//Read Encoder and ReadEncoder
+void ReadEncoder();
 
 //Estimate omega_ref From Encoder's data to be sensor data in Kalman Filter
 void BackwardDifference();
@@ -262,9 +261,6 @@ float Cascade(float Pd,float P,float Vd,float V);
 float positive(float var);
 float negative(float var);
 float limit(float var1, float var2);
-
-//volt Generator for Experiment Tune Kalman Filter
-void genvolt();
 
 //UI by UART Protocol
 void UART();
@@ -346,12 +342,99 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 switch(state)
+	  switch (Arm_State) {
+		case Main:
+			UART();
+			ReadEncoder();
+			break;
+		case Home:
+			UART();
+			ReadEncoder();
+			SetHome();
+			break;
+		case Emergency:
+			UART();
+			if(Emergency_status == 1){
+				Arm_State = Emergency;
+				Finish=1;
+			}
+			else {
+				Arm_State = Main;
+			}
+			break;
+		case Setzero:
+			UART();
+			if(micros() - timestamp > 2000000){
+				TIM3->CNT = 0;
+				theta_now = 0;
+				Arm_State = Main;
+			 }
+
+			break;
+		case PrepareRun:
+			UART();
+			TrajectoryGenerator_Flag=1;
+			TrajectoryGenerator();
+			Arm_State = Run;
+			break;
+		case Run:
+			UART();
+			if(Go_Flag == 0){
+				if(ModeN==1){
+					if(n_station >= n_station_max-1){
+						Arm_State = EndEffector;
+						FlagOpen_EndEffector =1;
+						ModeN=0;
+						Finish = 1;
+					}
+					else{
+						n_station++;
+					}
+					Arm_State = EndEffector;
+					FlagOpen_EndEffector =1;
+					theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
+				}
+				else{
+					Arm_State = EndEffector;
+					FlagOpen_EndEffector =1;
+					Finish =1;
+				}
+			}
+			break;
+		case EndEffector:
+			UART();
+			if(Enable_EndEffector == 1) //Enable Effector
+			{
+				OpenEndEffector();
+				if(EndEffector_Status == State_wait){
+					if(ModeN==1){
+						Arm_State = PrepareRun;
+					}
+					else{
+						Arm_State = Main;
+					}
+				}
+			}
+
+			else // Disable Effector
+			{
+				FlagOpen_EndEffector =0;
+				if(ModeN==1){
+					Arm_State = PrepareRun;
+				}
+				else{
+					Arm_State = Main;
+				}
+			}
+			break;
+
+	}
+	 /*switch(state)
 	 {
 	 case Main:
 		 UART();
 		 Finish = 0;
-		 Unwrap();
+		 ReadEncoder();
 		 break;
 	 case Run:
 		 UART();
@@ -408,7 +491,7 @@ int main(void)
 		 Finish=0;
 		 UART();
 		 SetHome();
-		 Unwrap();
+		 ReadEncoder();
 		 BackwardDifference();
 		 kalmanfilter();
 		 break;
@@ -416,11 +499,6 @@ int main(void)
 		 UART();
 		 if(micros() - timestamp > 2000000){
 			 TIM3->CNT = 0;
-			angle_before = 0;
-			angle = 0;
-			angle_base_before = 0;
-			angle_base =0;
-			angle_sum_before = 0;
 			theta_now = 0;
 			state = Main;
 			Finish=0;
@@ -445,76 +523,7 @@ int main(void)
 	 default:
 		 state =Main;
 		 break;
-	 }
-
-
-
-
-//	 switch (ArmState)
-//	 {
-//	 	 case Defualt:
-//
-//	 		 if (SetHome_Flag)
-//	 		 {
-//	 			 ArmState = RunSetHome;
-//	 			 break;
-//	 		 }
-//
-//	 		 else if (Go_Flag)
-//	 		 {
-//	 			 ArmState = PreparePID;
-//	 			 break;
-//	 		 }
-//
-//	 		 Unwrap();
-//	 		 RunMotor(volt, dir);
-//	 		 break;
-//
-//	 	 case RunSetHome:
-//	 		 SetHome();
-//	 		 ArmState = WaitSetHome;
-//	 		 break;
-//
-//	 	 case WaitSetHome:
-//	 		 Unwrap();
-//	 		 break;
-//
-//	 	 case FinishSetHome:
-//	 		 HAL_Delay(2000);
-//	 		 TIM3->CNT = 0;
-//	 		 angle_before = 0;
-//	 		 angle = 0;
-//	 		 angle_base_before = 0;
-//	 		 angle_base =0;
-//	 		 angle_sum_before = 0;
-//	 		 theta_now = 0;
-//	 		 Go_Flag = 1; //go!!
-//	 		 //GenVolt_Flag = 1;//gen volt
-//	 		 ArmState = Defualt;
-//	 		 break;
-//
-//	 	 case PreparePID:
-//	 		 TrajectoryGenerator_Flag = 1;
-//	 		 TrajectoryGenerator();
-//	 		 TrajectoryGenerator_Flag = 0;
-//	 		 e1 = 0;
-//	 		 s1 = 0;
-//	 		 p1 = 0;
-//	 		 u1 = 0;
-//	 		 e2 = 0;
-//	 		 s2 = 0;
-//	 		 u2 = 0;
-//	 		 ArmState = RunPID;
-//	 		 break;
-//
-//	 	 case RunPID:
-//	 		break;
-//
-//	 	 case FinishPID:
-//	 		 volt = 0;
-//	 		 ArmState = Defualt;
-//	 		 break;
-//	 }
+	 }*/
 
     /* USER CODE END WHILE */
 
@@ -929,59 +938,14 @@ void RunMotor(float volt, uint8_t direction)
 {
 	static float PWMOut = 0;
 
-	if (volt >= 0)
-	{
-		PID_dir = 1;
-	}
-
-	else
-	{
-		volt = -volt;
-		PID_dir = 0;
-	}
-
-	if (Emergency_status == 1)
-	{
-		volt = 0;
-	}
-
-//	if (volt == 0)
-//	{
-//		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
-//	}
-//
-//	else
-//	{
-//		HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_RESET);
-//	}
-
 	PWMOut = (volt*5000.0)/24.0;
-	HAL_GPIO_WritePin(Motor_DIR_GPIO_Port, Motor_DIR_Pin, PID_dir);
+	HAL_GPIO_WritePin(Motor_DIR_GPIO_Port, Motor_DIR_Pin, direction);
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMOut);
 }
 
-void Unwrap()
+void ReadEncoder()
 {
-//	angle_before = angle;
-//	angle_sum_before = theta_now;
-//
-//	angle = (TIM3->CNT/8191.0)*(2.0*M_PI);
-//	angle_base_before = angle_base;
-//
-//	if ((angle - angle_before) <= -threshold)
-//	{
-//		angle_base = angle_base_before + angle_max;
-//	}
-//	else if ((angle - angle_before) >= threshold)
-//	{
-//		angle_base = angle_base_before - angle_max;
-//	}
-//	else
-//	{
-//		angle_base = angle_base_before;
-//	}
-//
-//	theta_now = angle + angle_base;
+
 	theta_now = (TIM3->CNT/8191.0)*(2.0*M_PI);
 }
 
@@ -995,7 +959,7 @@ void SetHome()
 	if(SetHome_Flag == 1)
 	{
 		volt = 5;
-		RunMotor(volt, clockwise);
+		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
 	}
@@ -1009,17 +973,20 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		RunMotor(volt, clockwise);
 		theta_now = 0;
 		AlSet_Flag = 1;
-		state = Setzero;
 		timestamp = micros();
+		Arm_State = Setzero;
 	}
 
 	if (GPIO_Pin == Emergency_Pin)
 	{
 		if (HAL_GPIO_ReadPin(Emergency_GPIO_Port, Emergency_Pin) == GPIO_PIN_SET)
 		{
-			state=Emergency;
+			Arm_State=Main;
+			Finish = 1;
 			Emergency_status = 1;
 			HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
+			volt = 0;
+			RunMotor(volt, clockwise);
 		}
 		else
 		{
@@ -1036,18 +1003,24 @@ inline uint64_t micros()
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	//if (htim == &htim4 && (Go_Flag || GenVolt_Flag) && !SetHome_Flag && AlSet_Flag)
-	if (htim == &htim4 && Go_Flag && state == Run)
+	if (htim == &htim4 && Go_Flag && Arm_State == Run)
 	{
-		//genvol
-		Unwrap();
+		ReadEncoder();
 		BackwardDifference();
 		TrajectoryEvaluation();
 		kalmanfilter();
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
 		volt_check = volt;
-		RunMotor(volt, PID_dir);
 		t+=dt;
-		trigger = 1;
+
+		if (Go_Flag == 0) //when last loop
+		{
+			volt = 0;
+			t = 0;
+		}
+
+		RunMotor(volt, PID_dir);
+
 	}
 
 	if (htim == &htim11)
@@ -1194,7 +1167,7 @@ void kalmanfilter()
 {
 	prediction();
 	update();
-	position_kalman = theta_now;
+	position_kalman = data_x_new[0];
 	omega_kalman = data_x_new[1];
 	alpha_kalman = data_x_new[2];
 	jerk_kalman = data_x_new[3];
@@ -1210,9 +1183,9 @@ void TrajectoryGenerator()
 		static float Sa;
 		static float Sv;
 
-		ta = 0;
-		tv = 0;
-		tj = 0;
+		j_max = positive(j_max);
+		a_max = positive(a_max);
+		w_max = positive(w_max);
 
 		theta_0 = theta_now;
 
@@ -1394,6 +1367,7 @@ void TrajectoryEvaluation()
 		theta_ref = theta_f;
 		omega_ref = omega_ref;
 		alpha_ref = alpha_ref;
+		Go_Flag = 0;
 		t = 0;
 	}
 }
@@ -1431,6 +1405,16 @@ float Cascade(float Pd,float P,float Vd,float V){
 	static float add = 2.0;
 	u = PositionController(Pd, P);
 	u = VelocityController(Vd, V, u);
+	if (u >= 0)
+	{
+		PID_dir = 1;
+	}
+
+	else
+	{
+		u = -u;
+		PID_dir = 0;
+	}
 
 	if(t >= t5)
 	{
@@ -1458,87 +1442,8 @@ float positive(float var)
 
 float limit(float var1, float var2)
 {
-	if (var1 >= 0)
-	{
-		return (var1 > 24.0-var2) ? 24.0 : var1+var2;
-	}
-	else if (var1 < 0)
-	{
-		return (var1 < -24.0+var2) ? -24.0 : var1-var2;
-	}
-}
+	return (var1 > 24.0-var2) ? 24.0 : var1+var2;
 
-void genvolt()
-{
-	static float angle = 0;
-	if (GenVolt_Flag)
-	{
-		switch(state)
-		{
-		case 0:
-			volt = 0;
-			tt += 1;
-			if (tt >= 1000){
-				state = 1;
-				tt = 0;
-			}
-			break;
-
-		case 1:
-			volt = 24;
-			tt += 1;
-			if (tt >= 4000){
-				state = 2;
-				tt = 0;
-				volt = 0;
-			}
-			break;
-
-		case 2:
-			volt = 0;
-			tt += 1;
-			if (tt >= 1000){
-				state = 3;
-				tt = 0;
-			}
-			break;
-
-		case 3:
-			volt = (6.0/1000.0)*tt;
-			tt += 1;
-			if (tt >= 4000)
-			{
-				state = 4;
-				tt = 0;
-				volt = 0;
-			}
-			break;
-
-		case 4:
-			volt = 0;
-			tt += 1;
-			if (tt >= 1000)
-			{
-				state = 5;
-				tt = 0;
-				volt = 0;
-			}
-			break;
-
-		case 5:
-			volt = 12.0 + (12.0 * sin(angle));
-			angle = (tt/1000)*2*M_PI;
-			tt += 1;
-			if (tt >= 4000)
-			{
-				state = 0;
-				tt = 0;
-				volt = 0;
-				GenVolt_Flag = 0;
-			}
-			break;
-		}
-	}
 }
 
 void UART(){
@@ -1546,7 +1451,7 @@ void UART(){
 	static uint8_t HighByte =0;
 	static uint8_t LowByte = 0;
 	static uint16_t DataByte =0;
-	static uint8_t Check9=1;
+	static uint8_t CheckTrasmit=1;
 	static uint32_t Timestamp_UI =0;
 
 	switch(RxData[0])
@@ -1577,7 +1482,7 @@ void UART(){
 		DataByte = (HighByte<<8) + LowByte;
 		if(RxData[3] == (uint8_t)(~(0b10010100 + HighByte + LowByte))){
 			//Set Angular Velocity
-			w_max = DataByte*(10.0/255.0)*(2.0*M_PI/60.0);
+			w_max = (double)DataByte*(10.0/255.0)*(2.0*M_PI/60.0);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 			HAL_UART_DMAStop(&huart2);
@@ -1589,7 +1494,7 @@ void UART(){
 		DataByte = (HighByte<<8) + LowByte;
 		if(RxData[3] == (uint8_t)(~(0b10010101 + HighByte + LowByte))){
 			//Set Angular Position
-			theta_f = DataByte/10000.0;
+			theta_f = (double)DataByte/10000.0;
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 			ModeN =0;
@@ -1626,6 +1531,7 @@ void UART(){
 
 			ModeN=1;
 			n_station=0;
+			theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 			HAL_UART_DMAStop(&huart2);
@@ -1635,26 +1541,7 @@ void UART(){
 		if(RxData[1] == 0b01100111){
 			//Go to Station / Goal Position
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
-//			switch (Go_Mode) {
-//				case 1://Go by Angular Position
-//					GenFlag =1;
-//					run=1;
-//					theta = 0;
-//					break;
-//				case 2://Go by 1 station
-//					theta_f = station[index_station[0]-1]*(M_PI/180.0);
-//					GenFlag =1;
-//					theta = 0;
-//					run=1;
-//					break;
-//				case 3://Go by n station
-//					run = 2;
-//					theta_f = station[index_station[0]-1]*(M_PI/180.0);
-//					theta = 0;
-//					GenFlag =1;
-//					break;
-//			}
-			state = Run;
+			Arm_State = PrepareRun;
 			RxData[0] = 0;
 			HAL_UART_DMAStop(&huart2);
 		}
@@ -1662,28 +1549,27 @@ void UART(){
 	case 0b10011001: //Go_Mode 9 FRAME#1
 		if(RxData[1] == 0b01100110){
 			//Request Current Station
-
 			if(Finish){
-				if(Check9){
+				if(CheckTrasmit){
 					TxData2[4]=TxData[2];
 					TxData2[5]=TxData[3];
 					TxData2[6]=TxData[4];
 					TxData2[7]=TxData[5];
-					Check9 =0;
+					CheckTrasmit =0;
 					HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 					Timestamp_UI=micros();
 				}
 				else{
 					if(micros() - Timestamp_UI > 150){
 						RxData[0] = 0;
-						Check9=1;
+						CheckTrasmit=1;
 						Finish =0;
 						HAL_UART_DMAStop(&huart2);
 					}
 				}
 
 			}
-			else if(Check9){
+			else if(CheckTrasmit){
 				TxData[2] = 0b10011001;
 				TxData[3] = 0;
 				Current_station = (uint8_t)ceil(theta_now/0.087); // 1 station = 0.087 rads ->72 station
@@ -1691,13 +1577,13 @@ void UART(){
 				TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 				Timestamp_UI=micros();
-				Check9=0;
+				CheckTrasmit=0;
 			}
 			else{
 				if(micros() - Timestamp_UI > 150){
 					RxData[0] = 0;
 					HAL_UART_DMAStop(&huart2);
-					Check9=1;
+					CheckTrasmit=1;
 				}
 			}
 		}
@@ -1707,38 +1593,38 @@ void UART(){
 			//Request Angular Position
 		if(Finish){
 
-			if(Check9){
+			if(CheckTrasmit){
 				TxData2[4]=TxData[2];
 				TxData2[5]=TxData[3];
 				TxData2[6]=TxData[4];
 				TxData2[7]=TxData[5];
-				Check9 =0;
+				CheckTrasmit =0;
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 				Timestamp_UI=micros();
 			}
 			else{
 				if(micros() - Timestamp_UI > 150){
 					RxData[0] = 0;
-					Check9=1;
+					CheckTrasmit=1;
 					Finish =0;
 					HAL_UART_DMAStop(&huart2);
 				}
 			}
 		}
-		else if(Check9){
+		else if(CheckTrasmit){
 			TxData[2] = 0b10011010;
 			TxData[3] = (uint8_t)((theta_now*10000.0)/256.0);
 			TxData[4] = (uint8_t)(theta_now*10000)%256;
 			TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 			Timestamp_UI=micros();
-			Check9=0;
+			CheckTrasmit=0;
 		}
 		else{
 			if(micros() - Timestamp_UI > 150){
 				RxData[0] = 0;
 				HAL_UART_DMAStop(&huart2);
-				Check9=1;
+				CheckTrasmit=1;
 			}
 		}
 
@@ -1748,26 +1634,26 @@ void UART(){
 		if(RxData[1] == 0b01100100){
 			//Request Angular Velocity
 		if(Finish){
-			if(Check9){
+			if(CheckTrasmit){
 				TxData2[4]=TxData[2];
 				TxData2[5]=TxData[3];
 				TxData2[6]=TxData[4];
 				TxData2[7]=TxData[5];
-				Check9 =0;
+				CheckTrasmit =0;
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 				Timestamp_UI=micros();
 			}
 			else{
 				if(micros() - Timestamp_UI > 150){
 					RxData[0] = 0;
-					Check9=1;
+					CheckTrasmit=1;
 					Finish =0;
 					HAL_UART_DMAStop(&huart2);
-					Check9=1;
+					CheckTrasmit=1;
 				}
 			}
 		}
-		else if (Check9){
+		else if (CheckTrasmit){
 
 			TxData[2] = 0b10011011;
 			TxData[3] = 0;
@@ -1775,13 +1661,13 @@ void UART(){
 			TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 			Timestamp_UI=micros();
-			Check9=0;
+			CheckTrasmit=0;
 		}
 		else{
 			if(micros() - Timestamp_UI > 150){
 				RxData[0] = 0;
 				HAL_UART_DMAStop(&huart2);
-				Check9=1;
+				CheckTrasmit=1;
 			}
 		}
 
@@ -1808,7 +1694,8 @@ void UART(){
 	case 0b10011110: //Go_Mode 14 FRAME#1
 		if(RxData[1] == 0b01100001){
 			//Set HOME
-			state = Home;
+			Arm_State = Home;
+			theta_now = 0.1;
 			SetHome_Flag=1;
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
