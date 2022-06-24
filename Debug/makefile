@@ -60,8 +60,8 @@ all: main-build
 main-build: StudioIII.elf secondary-outputs
 
 # Tool invocations
-StudioIII.elf StudioIII.map: $(OBJS) $(USER_OBJS) D:\Github\StudioIII_Combine\STM32F411RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "StudioIII.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Github\StudioIII_Combine\STM32F411RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="StudioIII.map" -Wl,--gc-sections -static -L../Middlewares/Third_Party/ARM_CMSIS/CMSIS/DSP/Lib/GCC --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+StudioIII.elf StudioIII.map: $(OBJS) $(USER_OBJS) C:\Users\natch\Github\StudioIII_Combine\STM32F411RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "StudioIII.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\natch\Github\StudioIII_Combine\STM32F411RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="StudioIII.map" -Wl,--gc-sections -static -L../Middlewares/Third_Party/ARM_CMSIS/CMSIS/DSP/Lib/GCC --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

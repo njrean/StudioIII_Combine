@@ -110,8 +110,8 @@ float32_t data_I[16] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
 float32_t data_A[16];
 float32_t data_G[4];
 float32_t data_C[4] = {1,0,0,0};
-float32_t data_R[1] = {0.145};
-float32_t data_Q[1] = {0.01};
+float32_t data_R[1] = {0.1};
+float32_t data_Q[1] = {0.0001};//{100000};
 float32_t data_input[1] = {0};
 float32_t data_K[4] = {0,0,0,0};
 float32_t data_x[4] = {0,0,0,0};
@@ -159,14 +159,16 @@ static float u1 = 0;
 
 static float e2 = 0;
 static float s2 = 0;
+static float p2 = 0;
 static float u2 = 0;
 
-float kp_1 = 0;
-float ki_1 = 0;
-float kd_1 = 0;
+float kp_1 = 0.000001;
+float ki_1 = 0.00001;
+float kd_1 = 0.00001;
 
-float kp_2 = 0.005;
-float ki_2 = 0.01;
+float kp_2 = 0.001;
+float ki_2 = 0.02;
+float kd_2 = 0.01;
 
 //UART Variable
 uint8_t RxData[15];
@@ -182,7 +184,7 @@ uint8_t ReachGoal =0;
 
 uint8_t Finish =0;
 
-//Station
+//Station Main loop
 float station[10] = {10,20,30,40,50,60,70,80,90,100};
 uint8_t Current_station=1;
 uint8_t index_station[16];
@@ -213,8 +215,6 @@ uint8_t dir = 1;
 uint8_t PID_dir = 1;
 //static uint8_t state = 0;
 static float tt = 0;
-
-
 
 /* USER CODE END PV */
 
@@ -346,11 +346,13 @@ int main(void)
 		case Main:
 			UART();
 			ReadEncoder();
+			kalmanfilter();
 			break;
 		case Home:
 			UART();
 			ReadEncoder();
 			SetHome();
+			kalmanfilter();
 			break;
 		case Emergency:
 			UART();
@@ -406,7 +408,7 @@ int main(void)
 			if(Enable_EndEffector == 1) //Enable Effector
 			{
 				OpenEndEffector();
-				if(EndEffector_Status == State_wait){
+				if(EndEffector_State == State_wait){
 					if(ModeN==1){
 						Arm_State = PrepareRun;
 					}
@@ -937,7 +939,6 @@ static void MX_GPIO_Init(void)
 void RunMotor(float volt, uint8_t direction)
 {
 	static float PWMOut = 0;
-
 	PWMOut = (volt*5000.0)/24.0;
 	HAL_GPIO_WritePin(Motor_DIR_GPIO_Port, Motor_DIR_Pin, direction);
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMOut);
@@ -945,7 +946,7 @@ void RunMotor(float volt, uint8_t direction)
 
 void ReadEncoder()
 {
-
+	angle_sum_before = theta_now;
 	theta_now = (TIM3->CNT/8191.0)*(2.0*M_PI);
 }
 
@@ -958,7 +959,7 @@ void SetHome()
 {
 	if(SetHome_Flag == 1)
 	{
-		volt = 5;
+		volt = 4;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
@@ -972,6 +973,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		volt = 0;
 		RunMotor(volt, clockwise);
 		theta_now = 0;
+		kalmanfilter();
 		AlSet_Flag = 1;
 		timestamp = micros();
 		Arm_State = Setzero;
@@ -1002,15 +1004,24 @@ inline uint64_t micros()
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	//if (htim == &htim4 && (Go_Flag || GenVolt_Flag) && !SetHome_Flag && AlSet_Flag)
 	if (htim == &htim4 && Go_Flag && Arm_State == Run)
 	{
 		ReadEncoder();
 		BackwardDifference();
 		TrajectoryEvaluation();
 		kalmanfilter();
+
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
-		volt_check = volt;
+//		if (t <= t7)
+//		{
+//			volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
+//		}
+//
+//		else
+//		{
+//			volt = 3.5;
+//		}
+
 		t+=dt;
 
 		if (Go_Flag == 0) //when last loop
@@ -1020,7 +1031,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		}
 
 		RunMotor(volt, PID_dir);
-
 	}
 
 	if (htim == &htim11)
@@ -1322,6 +1332,7 @@ void TrajectoryGenerator()
 		u1 = 0;
 		e2 = 0;
 		s2 = 0;
+		p2 = 0;
 		u2 = 0;
 	}
 }
@@ -1367,8 +1378,11 @@ void TrajectoryEvaluation()
 		theta_ref = theta_f;
 		omega_ref = omega_ref;
 		alpha_ref = alpha_ref;
-		Go_Flag = 0;
-		t = 0;
+		if (theta_now >= (theta_ref - 0.009) && theta_now <= (theta_ref + 0.009))
+		{
+			Go_Flag = 0;
+			t = 0;
+		}
 	}
 }
 
@@ -1381,28 +1395,30 @@ float PositionController(float r,float y) //r == trajectory, y==feedback
 	return u1;
 }
 
-float VelocityController(float r,float y,float uP)
+float VelocityController(float r,float y,float uP) //r == trajectory, y==feedback
 {
 	e2 = uP + r;
-	if(e2 >= w_max)
+
+	if (dir == 0 && e2 <= w_max)
 	{
 		e2 = w_max;
 	}
 
-	else if (e2 <= -w_max)
+	else if (dir == 1 && e2 >= w_max)
 	{
-		e2 = -w_max;
+		e2 = w_max;
 	}
 
 	e2 = e2 - y;
 	s2 = s2 + e2;
-	u2 = (kp_2*e2) + (ki_2*s2);
+	u2 = (kp_2*e2) + (ki_2*s2) + (kd_2*(e2-p2));
+	p2 = e2;
 	return u2;
 }
 
 float Cascade(float Pd,float P,float Vd,float V){
 	static float u;
-	static float add = 2.0;
+	float add = 3.0;
 	u = PositionController(Pd, P);
 	u = VelocityController(Vd, V, u);
 	if (u >= 0)
@@ -1416,10 +1432,10 @@ float Cascade(float Pd,float P,float Vd,float V){
 		PID_dir = 0;
 	}
 
-	if(t >= t5)
-	{
-		add = 0;
-	}
+//	if(t >= t6)
+//	{
+//		add = 0;
+//	}
 
 	return limit(u, add);
 }
