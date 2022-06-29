@@ -61,7 +61,7 @@ float volt_check = 0;
 
 //Set Flag and Status
 uint8_t SetHome_Flag = 0;
-uint8_t AlSet_Flag = 1;
+uint8_t AlSet_Flag = 2;
 uint8_t Go_Flag = 0;
 uint8_t TrajectoryGenerator_Flag = 0;
 uint8_t GenVolt_Flag = 0;
@@ -111,7 +111,7 @@ float32_t data_A[16];
 float32_t data_G[4];
 float32_t data_C[4] = {1,0,0,0};
 float32_t data_R[1] = {0.1};
-float32_t data_Q[1] = {0.0001};//{100000};
+float32_t data_Q[1] = {100000000};
 float32_t data_input[1] = {0};
 float32_t data_K[4] = {0,0,0,0};
 float32_t data_x[4] = {0,0,0,0};
@@ -162,13 +162,13 @@ static float s2 = 0;
 static float p2 = 0;
 static float u2 = 0;
 
-float kp_1 = 0.000001;
-float ki_1 = 0.00001;
-float kd_1 = 0.00001;
+float kp_1 = 0;
+float ki_1 = 0;
+float kd_1 = 0;
 
-float kp_2 = 0.001;
-float ki_2 = 0.02;
-float kd_2 = 0.01;
+float kp_2 = 0.0001;
+float ki_2 = 0.005;
+float kd_2 = 0;
 
 //UART Variable
 uint8_t RxData[15];
@@ -887,11 +887,17 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Motor_DIR_Pin|PilotLamp_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
+  /*Configure GPIO pins : B1_Pin Encoder_X_Pin */
+  GPIO_InitStruct.Pin = B1_Pin|Encoder_X_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Proximity_Pin */
+  GPIO_InitStruct.Pin = Proximity_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(Proximity_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LD2_Pin */
   GPIO_InitStruct.Pin = LD2_Pin;
@@ -907,12 +913,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(Motor_DIR_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : Encoder_X_Pin */
-  GPIO_InitStruct.Pin = Encoder_X_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(Encoder_X_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pin : Emergency_Pin */
   GPIO_InitStruct.Pin = Emergency_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
@@ -927,6 +927,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(PilotLamp_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
   HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
@@ -957,9 +960,22 @@ void BackwardDifference()
 
 void SetHome()
 {
+	if (HAL_GPIO_ReadPin(Proximity_GPIO_Port, Proximity_Pin) == GPIO_PIN_RESET && AlSet_Flag == 2)
+	{
+		SetHome_Flag = 2;
+	}
+
 	if(SetHome_Flag == 1)
 	{
 		volt = 4;
+		RunMotor(volt, counterclockwise);
+		AlSet_Flag = 1;
+		SetHome_Flag = 0;
+	}
+
+	else if(SetHome_Flag == 2)
+	{
+		volt = 3;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
@@ -968,15 +984,20 @@ void SetHome()
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-	if (GPIO_Pin == Encoder_X_Pin && AlSet_Flag == 0)
+	if (GPIO_Pin == Proximity_Pin && AlSet_Flag == 0)
 	{
 		volt = 0;
 		RunMotor(volt, clockwise);
 		theta_now = 0;
 		kalmanfilter();
-		AlSet_Flag = 1;
+		AlSet_Flag = 2;
 		timestamp = micros();
 		Arm_State = Setzero;
+	}
+
+	else if (GPIO_Pin == Proximity_Pin && AlSet_Flag == 1)
+	{
+		SetHome_Flag = 2;
 	}
 
 	if (GPIO_Pin == Emergency_Pin)
@@ -1012,15 +1033,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		kalmanfilter();
 
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
-//		if (t <= t7)
-//		{
-//			volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
-//		}
-//
-//		else
-//		{
-//			volt = 3.5;
-//		}
 
 		t+=dt;
 
@@ -1378,7 +1390,8 @@ void TrajectoryEvaluation()
 		theta_ref = theta_f;
 		omega_ref = omega_ref;
 		alpha_ref = alpha_ref;
-		if (theta_now >= (theta_ref - 0.009) && theta_now <= (theta_ref + 0.009))
+
+		if (theta_now >= (theta_ref - 0.006) && theta_now <= (theta_ref + 0.006))
 		{
 			Go_Flag = 0;
 			t = 0;
@@ -1418,7 +1431,7 @@ float VelocityController(float r,float y,float uP) //r == trajectory, y==feedbac
 
 float Cascade(float Pd,float P,float Vd,float V){
 	static float u;
-	float add = 3.0;
+	float add = 2.5;
 	u = PositionController(Pd, P);
 	u = VelocityController(Vd, V, u);
 	if (u >= 0)
@@ -1432,9 +1445,11 @@ float Cascade(float Pd,float P,float Vd,float V){
 		PID_dir = 0;
 	}
 
+	add = (3*(t/t2) < 3 ) ? 3*(t/t2) : 3;
+
 //	if(t >= t6)
 //	{
-//		add = 0;
+//		add = 2;
 //	}
 
 	return limit(u, add);
