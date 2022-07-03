@@ -111,7 +111,7 @@ float32_t data_A[16];
 float32_t data_G[4];
 float32_t data_C[4] = {1,0,0,0};
 float32_t data_R[1] = {0.1};
-float32_t data_Q[1] = {100000000};
+float32_t data_Q[1] = {100};
 float32_t data_input[1] = {0};
 float32_t data_K[4] = {0,0,0,0};
 float32_t data_x[4] = {0,0,0,0};
@@ -136,7 +136,7 @@ float ta = 0;
 float tv = 0;
 	//Variable of Trajectory
 double w_max = M_PI/3;		//omega_ref max (rad/s)
-double a_max = 0.5;			//alpha_ref max (rad/s^2)
+double a_max = 0.3;			//alpha_ref max (rad/s^2)
 double j_max = 0.5;			//jerk max	(rad/s^3)
 double theta_0 = 0;			//theta_ref now (rad)
 double theta_f = 0; 		//theta_ref want to go (rad)
@@ -166,11 +166,31 @@ float kp_1 = 0;
 float ki_1 = 0;
 float kd_1 = 0;
 
-float kp_2 = 0.0001;
-float ki_2 = 0.005;
+float kp_2 = 0;
+float ki_2 = 0;
 float kd_2 = 0;
 
+float kp_1_m = 0;
+float ki_1_m = 0;
+float kd_1_m = 0;
+
+float kp_2_m = 0.002;
+float ki_2_m = 0.04;
+float kd_2_m = 0.00001;
+
+float kp_1_l = 0;
+float ki_1_l = 0;
+float kd_1_l = 0;
+
+float kp_2_l = 0;
+float ki_2_l = 0.005;
+float kd_2_l = 0.0008;
+
+//Set Home
+uint8_t SetZeroState = 1;
+
 //UART Variable
+uint16_t UARTDelay = 95;
 uint8_t RxData[15];
 uint8_t TxData[6] = {0x58, 0b01110101,0,0,0,0};
 uint8_t TxData2[8] = {70, 110,0x58, 0b01110101,0,0,0,0};
@@ -185,7 +205,7 @@ uint8_t ReachGoal =0;
 uint8_t Finish =0;
 
 //Station Main loop
-float station[10] = {10,20,30,40,50,60,70,80,90,100};
+float station[10] = {0,90,180,270,50,60,70,80,90,355};
 uint8_t Current_station=1;
 uint8_t index_station[16];
 uint8_t n_station_max=1;
@@ -214,7 +234,6 @@ uint32_t timestamp = 0;
 uint8_t dir = 1;
 uint8_t PID_dir = 1;
 //static uint8_t state = 0;
-static float tt = 0;
 
 /* USER CODE END PV */
 
@@ -367,8 +386,13 @@ int main(void)
 		case Setzero:
 			UART();
 			if(micros() - timestamp > 2000000){
-				TIM3->CNT = 0;
-				theta_now = 0;
+				if (SetZeroState)
+				{
+					TIM3->CNT = 0;
+					angle_base = 0;
+					angle = 0;
+					theta_now = 0;
+				}
 				Arm_State = Main;
 			 }
 
@@ -887,11 +911,11 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Motor_DIR_Pin|PilotLamp_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : B1_Pin Encoder_X_Pin */
-  GPIO_InitStruct.Pin = B1_Pin|Encoder_X_Pin;
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Proximity_Pin */
   GPIO_InitStruct.Pin = Proximity_Pin;
@@ -933,8 +957,8 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
@@ -949,8 +973,28 @@ void RunMotor(float volt, uint8_t direction)
 
 void ReadEncoder()
 {
+//	angle_sum_before = theta_now;
+//	theta_now = (TIM3->CNT/8191.0)*(2.0*M_PI);
+
+	angle_before = angle;
 	angle_sum_before = theta_now;
-	theta_now = (TIM3->CNT/8191.0)*(2.0*M_PI);
+
+	angle = (TIM3->CNT/8191.0)*(2.0*M_PI);
+	angle_base_before = angle_base;
+	if ((angle - angle_before) <= -threshold)
+	{
+		angle_base = angle_base_before + angle_max;
+	}
+	else if ((angle - angle_before) >= threshold)
+	{
+		angle_base = angle_base_before - angle_max;
+	}
+	else
+	{
+		angle_base = angle_base_before;
+	}
+
+	theta_now = angle + angle_base;
 }
 
 void BackwardDifference()
@@ -967,7 +1011,7 @@ void SetHome()
 
 	if(SetHome_Flag == 1)
 	{
-		volt = 4;
+		volt = 9;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 1;
 		SetHome_Flag = 0;
@@ -975,7 +1019,7 @@ void SetHome()
 
 	else if(SetHome_Flag == 2)
 	{
-		volt = 3;
+		volt = 6.5;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
@@ -998,6 +1042,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	else if (GPIO_Pin == Proximity_Pin && AlSet_Flag == 1)
 	{
 		SetHome_Flag = 2;
+	}
+
+	if (GPIO_Pin == B1_Pin)
+	{
+		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+		SetZeroState = (SetZeroState+1)%2;
 	}
 
 	if (GPIO_Pin == Emergency_Pin)
@@ -1036,11 +1086,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 		t+=dt;
 
+
 		if (Go_Flag == 0) //when last loop
 		{
 			volt = 0;
 			t = 0;
 		}
+
 
 		RunMotor(volt, PID_dir);
 	}
@@ -1333,6 +1385,31 @@ void TrajectoryGenerator()
 		v[5] = v[4] + a[4]*(t6-t5);
 		a[5] = a[4];
 
+		//Change Cascade Gain
+		if (theta_dest > (2*M_PI/9))
+		{
+			kp_1 = kp_1_m;
+			ki_1 = ki_1_m;
+			kd_1 = kd_1_m;
+
+			kp_2 = kp_2_m;
+			ki_2 = ki_2_m;
+			kd_2 = kd_2_m;
+
+		}
+
+		else
+		{
+			kp_1 = kp_1_l;
+			ki_1 = ki_1_l;
+			kd_1 = kd_1_l;
+
+			kp_2 = kp_2_l;
+			ki_2 = ki_2_l;
+			kd_2 = kd_2_l;
+		}
+
+
 		//Set Flag to Go
 		TrajectoryGenerator_Flag = 0;
 		Go_Flag = 1;
@@ -1391,8 +1468,18 @@ void TrajectoryEvaluation()
 		omega_ref = omega_ref;
 		alpha_ref = alpha_ref;
 
-		if (theta_now >= (theta_ref - 0.006) && theta_now <= (theta_ref + 0.006))
+		if (dir == 1 && theta_now >= (theta_ref - 0.008) && theta_now <= theta_ref)
 		{
+			volt = 0;
+			RunMotor(volt, PID_dir);
+			Go_Flag = 0;
+			t = 0;
+		}
+
+		else if (dir == 0 && theta_now >= theta_ref && theta_now <= (theta_ref + 0.008))
+		{
+			volt = 0;
+			RunMotor(volt, PID_dir);
 			Go_Flag = 0;
 			t = 0;
 		}
@@ -1431,7 +1518,7 @@ float VelocityController(float r,float y,float uP) //r == trajectory, y==feedbac
 
 float Cascade(float Pd,float P,float Vd,float V){
 	static float u;
-	float add = 2.5;
+	static float add = 0;
 	u = PositionController(Pd, P);
 	u = VelocityController(Vd, V, u);
 	if (u >= 0)
@@ -1445,11 +1532,17 @@ float Cascade(float Pd,float P,float Vd,float V){
 		PID_dir = 0;
 	}
 
-	add = (3*(t/t2) < 3 ) ? 3*(t/t2) : 3;
 
-//	if(t >= t6)
+	//add = (6.2*(t/t1) < 6.2) ? 6.2*(t/t1) : 6.2;
+
+//	if(t >= t5 && t < t6)
 //	{
-//		add = 2;
+//		add = 4.7-((1.6/(t6-t5))*(t-t5));
+//	}
+//
+//	else if (t >= t6)
+//	{
+//		add = 4.7-1.6;
 //	}
 
 	return limit(u, add);
@@ -1591,7 +1684,7 @@ void UART(){
 					Timestamp_UI=micros();
 				}
 				else{
-					if(micros() - Timestamp_UI > 150){
+					if(micros() - Timestamp_UI > UARTDelay){
 						RxData[0] = 0;
 						CheckTrasmit=1;
 						Finish =0;
@@ -1611,7 +1704,7 @@ void UART(){
 				CheckTrasmit=0;
 			}
 			else{
-				if(micros() - Timestamp_UI > 150){
+				if(micros() - Timestamp_UI > UARTDelay){
 					RxData[0] = 0;
 					HAL_UART_DMAStop(&huart2);
 					CheckTrasmit=1;
@@ -1634,7 +1727,7 @@ void UART(){
 				Timestamp_UI=micros();
 			}
 			else{
-				if(micros() - Timestamp_UI > 150){
+				if(micros() - Timestamp_UI > UARTDelay){
 					RxData[0] = 0;
 					CheckTrasmit=1;
 					Finish =0;
@@ -1652,7 +1745,7 @@ void UART(){
 			CheckTrasmit=0;
 		}
 		else{
-			if(micros() - Timestamp_UI > 150){
+			if(micros() - Timestamp_UI > UARTDelay){
 				RxData[0] = 0;
 				HAL_UART_DMAStop(&huart2);
 				CheckTrasmit=1;
@@ -1675,7 +1768,7 @@ void UART(){
 				Timestamp_UI=micros();
 			}
 			else{
-				if(micros() - Timestamp_UI > 150){
+				if(micros() - Timestamp_UI > UARTDelay){
 					RxData[0] = 0;
 					CheckTrasmit=1;
 					Finish =0;
@@ -1688,14 +1781,14 @@ void UART(){
 
 			TxData[2] = 0b10011011;
 			TxData[3] = 0;
-			TxData[4] = (uint8_t)((omega_kalman*60/(2*M_PI))*255/10);
+			TxData[4] = (uint8_t)((positive(omega_kalman)*60/(2*M_PI))*255/10);
 			TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 			Timestamp_UI=micros();
 			CheckTrasmit=0;
 		}
 		else{
-			if(micros() - Timestamp_UI > 150){
+			if(micros() - Timestamp_UI > UARTDelay){
 				RxData[0] = 0;
 				HAL_UART_DMAStop(&huart2);
 				CheckTrasmit=1;

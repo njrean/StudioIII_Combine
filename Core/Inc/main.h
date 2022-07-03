@@ -61,6 +61,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define B1_Pin GPIO_PIN_13
 #define B1_GPIO_Port GPIOC
+#define B1_EXTI_IRQn EXTI15_10_IRQn
 #define Proximity_Pin GPIO_PIN_2
 #define Proximity_GPIO_Port GPIOC
 #define Proximity_EXTI_IRQn EXTI2_IRQn
@@ -76,9 +77,6 @@ void Error_Handler(void);
 #define Encoder_B_GPIO_Port GPIOA
 #define Motor_DIR_Pin GPIO_PIN_10
 #define Motor_DIR_GPIO_Port GPIOB
-#define Encoder_X_Pin GPIO_PIN_7
-#define Encoder_X_GPIO_Port GPIOC
-#define Encoder_X_EXTI_IRQn EXTI9_5_IRQn
 #define Motor_PWM_Pin GPIO_PIN_8
 #define Motor_PWM_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
