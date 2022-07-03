@@ -239,6 +239,8 @@ uint8_t PID_dir = 1;
 float u_i[3];
 float y_i[3];
 
+float volt_buff = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -1087,6 +1089,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		BackwardDifference();
 		TrajectoryEvaluation();
 		kalmanfilter();
+
+		volt_buff = TransferFunction(omega_ref);
 
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
 
