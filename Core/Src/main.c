@@ -236,8 +236,8 @@ uint8_t PID_dir = 1;
 //static uint8_t state = 0;
 
 //TransferFunction
-float u_i[3];
-float y_i[3];
+float u_i[4];
+float y_i[4];
 
 float volt_buff = 0;
 
@@ -1435,7 +1435,7 @@ void TrajectoryGenerator()
 		u2 = 0;
 
 		//Reset TransferFunction
-		for(int i=0;i<3;i++){
+		for(int i=0;i<4;i++){
 			u_i[i]=0;
 			y_i[i]=0;
 		}
@@ -1928,8 +1928,8 @@ void CheckEndEffector()
 
 float TransferFunction(float u_tf){
 	u_i[0] = u_tf;
-	y_i[0] = (0.001526*y_i[1] - 0.0008505*y_i[2] + u_i[0] - 1.993*u_i[1] + 0.9935*u_i[2])/0.0007016;
-	for(int i=1;i>=0;i--){
+	y_i[0] = 0.6524*y_i[1] + 157.5*u_i[1] - 306.8*u_i[2] + 151.9*u_i[3];
+	for(int i=2;i>=0;i--){
 		u_i[i+1]=u_i[i];
 		y_i[i+i]=y_i[i];
 	}
