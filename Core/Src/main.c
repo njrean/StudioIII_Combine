@@ -235,6 +235,10 @@ uint8_t dir = 1;
 uint8_t PID_dir = 1;
 //static uint8_t state = 0;
 
+//TransferFunction
+float u_i[3];
+float y_i[3];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -291,6 +295,8 @@ uint64_t micros();
 void OpenEndEffector();
 void CheckEndEffector();
 
+//TransferFunction
+float TransferFunction(float u_tf);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -1423,6 +1429,12 @@ void TrajectoryGenerator()
 		s2 = 0;
 		p2 = 0;
 		u2 = 0;
+
+		//Reset TransferFunction
+		for(int i=0;i<3;i++){
+			u_i[i]=0;
+			y_i[i]=0;
+		}
 	}
 }
 
@@ -1909,6 +1921,17 @@ void CheckEndEffector()
 		HAL_I2C_Master_Seq_Receive_IT(&hi2c1, ENDEFF_ADDR, &EndEffector_Status, 1, I2C_LAST_FRAME);
 	}
 }
+
+float TransferFunction(float u_tf){
+	u_i[0] = u_tf;
+	y_i[0] = (0.001526*y_i[1] - 0.0008505*y_i[2] + u_i[0] - 1.993*u_i[1] + 0.9935*u_i[2])/0.0007016;
+	for(int i=1;i>=0;i--){
+		u_i[i+1]=u_i[i];
+		y_i[i+i]=y_i[i];
+	}
+	return y_i[0];
+}
+
 /* USER CODE END 4 */
 
 /**
