@@ -1659,19 +1659,31 @@ void UART(){
 		if(RxData[1] == 0b01101101){
 			//connect MCU
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
 
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10010011: //Go_Mode 3 FRAME#1
 		if(RxData[1] == 0b01101100){
 			//disconnect MCU
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10010100: //Go_Mode 4 FRAME#2
@@ -1682,9 +1694,15 @@ void UART(){
 			//Set Angular Velocity
 			w_max = (double)DataByte*(10.0/255.0)*(2.0*M_PI/60.0);
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10010101: //Go_Mode 5 FRAME#2
@@ -1695,10 +1713,16 @@ void UART(){
 			//Set Angular Position
 			theta_f = (double)DataByte/10000.0;
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 			ModeN =0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10010110: //Go_Mode 6 FRAME#2
@@ -1711,9 +1735,15 @@ void UART(){
 			theta_f = station[index_station[0]-1]*(M_PI/180.0);
 			ModeN =0;
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10010111: //Go_Mode 7 FRAME#3
@@ -1734,19 +1764,31 @@ void UART(){
 			n_station=0;
 			theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011000: //Go_Mode 8 FRAME#1
 		if(RxData[1] == 0b01100111){
 			//Go to Station / Goal Position
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			Arm_State = PrepareRun;
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011001: //Go_Mode 9 FRAME#1
@@ -1760,17 +1802,21 @@ void UART(){
 					TxData2[7]=TxData[5];
 					CheckTrasmit =0;
 					HAL_UART_DMAStop(&huart2); //
+					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 					HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
-					Timestamp_UI=micros();
+//					Timestamp_UI=micros();
 				}
 				else{
-					if(micros() - Timestamp_UI > UARTDelay){
-						RxData[0] = 0;
-						CheckTrasmit=1;
-						Finish =0;
-						HAL_UART_DMAStop(&huart2);
-						HAL_UART_Receive_DMA(&huart2, RxData, 12);
-					}
+//					if(micros() - Timestamp_UI > UARTDelay){
+//						RxData[0] = 0;
+//						CheckTrasmit=1;
+//						Finish =0;
+//						HAL_UART_DMAStop(&huart2);
+//						HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//					}
+					RxData[0] = 0;
+					CheckTrasmit=1;
+					Finish =0;
 				}
 
 			}
@@ -1781,18 +1827,26 @@ void UART(){
 				TxData[4] = Current_station;
 				TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 				HAL_UART_DMAStop(&huart2); //
+				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
-				Timestamp_UI=micros();
+//				Timestamp_UI=micros();
 				CheckTrasmit=0;
 			}
 			else{
-				if(micros() - Timestamp_UI > UARTDelay){
-					RxData[0] = 0;
-					HAL_UART_DMAStop(&huart2);
-					HAL_UART_Receive_DMA(&huart2, RxData, 12);
-					CheckTrasmit=1;
-				}
+//				if(micros() - Timestamp_UI > UARTDelay){
+//					RxData[0] = 0;
+//					HAL_UART_DMAStop(&huart2);
+//					HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//					CheckTrasmit=1;
+//				}
+				RxData[0] = 0;
+				CheckTrasmit=1;
 			}
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011010: //Go_Mode 10 FRAME#1
@@ -1811,17 +1865,21 @@ void UART(){
 				TxData2[7]=TxData[5];
 				CheckTrasmit =0;
 				HAL_UART_DMAStop(&huart2);
+				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
-				Timestamp_UI=micros();
+//				Timestamp_UI=micros();
 			}
 			else{
-				if(micros() - Timestamp_UI > UARTDelay){
-					RxData[0] = 0;
-					CheckTrasmit=1;
-					Finish =0;
-					HAL_UART_DMAStop(&huart2);
-					HAL_UART_Receive_DMA(&huart2, RxData, 12);
-				}
+//				if(micros() - Timestamp_UI > UARTDelay){
+//					RxData[0] = 0;
+//					CheckTrasmit=1;
+//					Finish =0;
+////					HAL_UART_DMAStop(&huart2);
+////					HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//				}
+				RxData[0] = 0;
+				CheckTrasmit=1;
+				Finish =0;
 			}
 		}
 		else if(CheckTrasmit){
@@ -1837,19 +1895,27 @@ void UART(){
 			}
 			TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
-			Timestamp_UI=micros();
+//			Timestamp_UI=micros();
 			CheckTrasmit=0;
 		}
 		else{
-			if(micros() - Timestamp_UI > UARTDelay){
-				RxData[0] = 0;
-//				HAL_UART_DMAStop(&huart2);
-//				HAL_UART_Receive_DMA(&huart2, RxData, 12);
-				CheckTrasmit=1;
-			}
+//			if(micros() - Timestamp_UI > UARTDelay){
+//				RxData[0] = 0;
+////				HAL_UART_DMAStop(&huart2);
+////				HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//				CheckTrasmit=1;
+//			}
+			RxData[0] = 0;
+			CheckTrasmit=1;
 		}
 
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011011: //Go_Mode 11 FRAME#1
@@ -1863,18 +1929,22 @@ void UART(){
 				TxData2[7]=TxData[5];
 				CheckTrasmit =0;
 				HAL_UART_DMAStop(&huart2); //
+				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
-				Timestamp_UI=micros();
+//				Timestamp_UI=micros();
 			}
 			else{
-				if(micros() - Timestamp_UI > UARTDelay){
-					RxData[0] = 0;
-					CheckTrasmit=1;
-					Finish =0;
-					HAL_UART_DMAStop(&huart2);
-					HAL_UART_Receive_DMA(&huart2, RxData, 12);
-					CheckTrasmit=1;
-				}
+//				if(micros() - Timestamp_UI > UARTDelay){
+//					RxData[0] = 0;
+//					CheckTrasmit=1;
+//					Finish =0;
+////					HAL_UART_DMAStop(&huart2);
+////					HAL_UART_Receive_DMA(&huart2, RxData, 12);
+////					CheckTrasmit=1;
+//				}
+				RxData[0] = 0;
+				CheckTrasmit=1;
+				Finish =0;
 			}
 		}
 		else if (CheckTrasmit){
@@ -1884,19 +1954,27 @@ void UART(){
 			TxData[4] = (uint8_t)((positive(omega_kalman)*60/(2*M_PI))*255/10);
 			TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 			HAL_UART_DMAStop(&huart2); //
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
-			Timestamp_UI=micros();
+//			Timestamp_UI=micros();
 			CheckTrasmit=0;
 		}
 		else{
-			if(micros() - Timestamp_UI > UARTDelay){
-				RxData[0] = 0;
-//				HAL_UART_DMAStop(&huart2);
-//				HAL_UART_Receive_DMA(&huart2, RxData, 12);
-				CheckTrasmit=1;
-			}
+//			if(micros() - Timestamp_UI > UARTDelay){
+//				RxData[0] = 0;
+////				HAL_UART_DMAStop(&huart2);
+////				HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//				CheckTrasmit=1;
+//			}
+			RxData[0] = 0;
+			CheckTrasmit=1;
 		}
 
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011100: //Go_Mode 12 FRAME#1
@@ -1904,8 +1982,14 @@ void UART(){
 			//enable gripple
 			Enable_EndEffector = 1;
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011101: //Go_Mode 13 FRAME#1
@@ -1913,9 +1997,15 @@ void UART(){
 			//disable gripple
 			Enable_EndEffector = 0;
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 
+		}
+		else{
+			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+			RxData[0]=0;
 		}
 		break;
 	case 0b10011110: //Go_Mode 14 FRAME#1
@@ -1924,11 +2014,13 @@ void UART(){
 			Arm_State = Home;
 			SetHome_Flag=1;
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
 		}
 		else{
 			HAL_UART_DMAStop(&huart2);
+			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			RxData[0]=0;
 		}
 		break;
