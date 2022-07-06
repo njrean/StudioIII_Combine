@@ -93,6 +93,9 @@ float alpha_kalman = 0;
 float jerk_kalman = 0;
 float dt = 0.001;
 
+//Low Pass
+float alpha = 0;
+
 arm_matrix_instance_f32 I;
 arm_matrix_instance_f32 A;
 arm_matrix_instance_f32 G;
@@ -114,7 +117,7 @@ float32_t data_A[16];
 float32_t data_G[4];
 float32_t data_C[4] = {1,0,0,0};
 float32_t data_R[1] = {0.1};
-float32_t data_Q[1] = {10000};
+float32_t data_Q[1] = {100000000};
 float32_t data_input[1] = {0};
 float32_t data_K[4] = {0,0,0,0};
 float32_t data_x[4] = {0,0,0,0};
@@ -183,13 +186,6 @@ float kp_2_m = 0.002;
 float ki_2_m = 0.04;
 float kd_2_m = 0;
 
-float kp_1_l = 0;
-float ki_1_l = 0;
-float kd_1_l = 0;
-
-float kp_2_l = 0;
-float ki_2_l = 0.005;
-float kd_2_l = 0.0008;
 
 //Set Home
 uint8_t SetZeroState = 1;
@@ -210,7 +206,7 @@ uint8_t ReachGoal =0;
 uint8_t Finish =0;
 
 //Station Main loop
-float station[10] = {0,90,180,270,50,60,70,80,90,355};
+float station[10] = {0,5,10,15,20,90,180,270,275,355};
 uint8_t Current_station=1;
 uint8_t index_station[16];
 uint8_t n_station_max=1;
@@ -304,6 +300,10 @@ void CheckEndEffector();
 
 //TransferFunction
 float TransferFunction(float u_tf);
+
+float LowpassFilter(float Vin);
+
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -377,8 +377,6 @@ int main(void)
 	  switch (Arm_State) {
 		case Main:
 			UART();
-			ReadEncoder();
-			kalmanfilter();
 			break;
 		case Home:
 			UART();
@@ -468,101 +466,6 @@ int main(void)
 			break;
 
 	}
-	 /*switch(state)
-	 {
-	 case Main:
-		 UART();
-		 Finish = 0;
-		 ReadEncoder();
-		 break;
-	 case Run:
-		 UART();
-		 if(ModeN==0){
-			 if(Go_Flag==0){
-				 TrajectoryGenerator_Flag=1;
-				 TrajectoryGenerator();
-			 }
-
-			 else if(Go_Flag==1){
-				 if(theta_ref == theta_f){
-					 Go_Flag =0;
-					 volt = 0;
-					 RunMotor(volt, PID_dir);
-					 if(Enable_EndEffector==1){
-						 FlagOpen_EndEffector=1;
-					 }
-					 else{
-						 FlagOpen_EndEffector=0;
-					 }
-					 state = EndEffector;
-				 }
-			 }
-		 }
-		 else if(ModeN ==1){
-			 if(n_station > n_station_max){
-				 Go_Flag=0;
-				 Finish=1;
-				 state = Main;
-			 }
-			 else if(Go_Flag==0){
-				 TrajectoryGenerator_Flag=1;
-				 theta_f = station[index_station[n_station]];
-				 TrajectoryGenerator();
-				 n_station++;
-			 }
-			 else if(Go_Flag==1){
-				 if(theta_ref == theta_f){
-					 Go_Flag=0;
-					 volt = 0;
-					 RunMotor(volt, PID_dir);
-					 if(Enable_EndEffector==1){
-						 FlagOpen_EndEffector=1;
-					 }
-					 else{
-						 FlagOpen_EndEffector=0;
-					 }
-					 state = EndEffector;
-				 }
-			 }
-		 }
-		 break;
-	 case Home:
-		 Finish=0;
-		 UART();
-		 SetHome();
-		 ReadEncoder();
-		 BackwardDifference();
-		 kalmanfilter();
-		 break;
-	 case Setzero:
-		 UART();
-		 if(micros() - timestamp > 2000000){
-			 TIM3->CNT = 0;
-			theta_now = 0;
-			state = Main;
-			Finish=0;
-		 }
-		 break;
-	 case EndEffector:
-		 UART();
-		 OpenEndEffector();
-		 if(ModeN==0 && EndEffector_State == State_wait ){
-			 state= Main;
-			 Finish=1;
-		 }
-		 else if(ModeN==1 && EndEffector_State == State_wait){
-			 state= Run;
-		 }
-		 break;
-	 case Emergency:
-		 if(Emergency_status==0){
-			 state=Main;
-		 }
-		 break;
-	 default:
-		 state =Main;
-		 break;
-	 }*/
 
     /* USER CODE END WHILE */
 
@@ -1023,7 +926,7 @@ void SetHome()
 
 	if(SetHome_Flag == 1)
 	{
-		volt = 7;
+		volt = 5;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 1;
 		SetHome_Flag = 0;
@@ -1031,7 +934,7 @@ void SetHome()
 
 	else if(SetHome_Flag == 2)
 	{
-		volt = 5.0;
+		volt = 3.7;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 0;
 		SetHome_Flag = 0;
@@ -1091,7 +994,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		ReadEncoder();
 		TrajectoryEvaluation();
 		kalmanfilter();
-
+		alpha = LowpassFilter(alpha_kalman);
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
 
 		t+=dt;
@@ -1104,15 +1007,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			t = 0;
 		}
 
-//		else if (dir == 0 && theta_now >= (theta_f - 0.007) && theta_now <= (theta_f + 0.007))
-//		{
-//			volt = 0;
-//			RunMotor(volt, PID_dir);
-//			Go_Flag = 0;
-//			t = 0;
-//		}
-
 		RunMotor(volt, PID_dir);
+	}
+
+	else if (htim == &htim4 && !Go_Flag && Arm_State != Home)
+	{
+		ReadEncoder();
+		kalmanfilter();
+		alpha = LowpassFilter(alpha_kalman);
 	}
 
 	if (htim == &htim11)
@@ -1294,6 +1196,52 @@ void TrajectoryGenerator()
 			dir = 1;
 		}
 
+		//Change Cascade Gain
+		if (theta_dest >= 6.0737)
+		{
+			kp_1 = 0;
+			ki_1 = 0;
+			kd_1 = 0;
+
+			kp_2 = 0.001;
+			ki_2 = 0.04;
+			kd_2 = 0.0001;
+
+			j_max = 0.6;
+
+			TrajectoryEvaluationFlag =1;
+		}
+
+		else if(theta_dest <= 0.524){
+			kp_1 = 0;
+			ki_1 = 0;
+			kd_1 = 0;
+
+			kp_2 = 0;
+			ki_2 = 0;
+			kd_2 = 0;
+
+			j_max = 0.4;
+
+			TrajectoryEvaluationFlag = 0;
+		}
+
+		else{
+			kp_1 = kp_1_m;
+			ki_1 = ki_1_m;
+			kd_1 = kd_1_m;
+
+			kp_2 = kp_2_m;
+			ki_2 = ki_2_m;
+			kd_2 = kd_2_m;
+
+			j_max = 0.4;
+
+			TrajectoryEvaluationFlag = 1;
+		}
+
+
+
 		if(w_max*j_max < pow(a_max,2.0)){
 			M=1.0;
 			N=0.0;
@@ -1403,67 +1351,27 @@ void TrajectoryGenerator()
 		v[5] = v[4] + a[4]*(t6-t5);
 		a[5] = a[4];
 
-		//Change Cascade Gain
-		if (theta_dest >= 6.0737)
-		{
-//			kp_1 = 0;
-//			ki_1 = 0;
-//			kd_1 = 0;
-//
-//			kp_2 = 0.002;
-//			ki_2 = 0.07;
-//			kd_2 = 0;
-
-			kp_1 = 0;
-			ki_1 = 0;
-			kd_1 = 0;
-
-			kp_2 = 0.003;
-			ki_2 = 0.05;
-			kd_2 = 0;
-
-			TrajectoryEvaluationFlag =1;
-
-		}
-
-		else if(theta_dest <= 0.524){
-			kp_1 = kp_1_m;
-			ki_1 = ki_1_m;
-			kd_1 = kd_1_m;
-
-			kp_2 = kp_2_m;
-			ki_2 = ki_2_m;
-			kd_2 = kd_2_m;
-			TrajectoryEvaluationFlag = 0;
-		}
-
-		else
-		{
-			kp_1 = kp_1_m;
-			ki_1 = ki_1_m;
-			kd_1 = kd_1_m;
-
-			kp_2 = kp_2_m;
-			ki_2 = ki_2_m;
-			kd_2 = kd_2_m;
-			TrajectoryEvaluationFlag =1;
-		}
-
 		//Check Volt Constant
 		if(theta_f <= 1.6){ //90 degree
 			volt_constant = 2.5; //2.9;
-			volt_statics = 3.8;
+			volt_statics = 3.5;
 		}
 		else if(theta_f <= 3.13){ //180 degree
 			volt_constant = 3.5;//4.0;
 			volt_statics = 4.0;
 		}
+
+		else if(theta_f <= 4.36){ //250 degree
+			volt_constant = 3.4;//4.35;
+			volt_statics = 4.6;
+		}
+
 		else if(theta_f <= 4.72){ //270 degree
-			volt_constant = 4.0;//4.35;
+			volt_constant = 3.8;//4.35;
 			volt_statics = 4.6;
 		}
 		else{
-			volt_constant = 3.0;//3.9;
+			volt_constant = 3.4;//3.9;
 			volt_statics = 4.0;
 		}
 
@@ -1610,10 +1518,13 @@ float Cascade(float Pd,float P,float Vd,float V){
 	{
 		PID_dir = dir;
 		if(theta_now == theta_0){
+			RunMotor(0.0, PID_dir);
 			u = volt_statics;
+			volt_statics += 0.0001;
 		}
 		else{
 			u = volt_constant;
+
 		}
 
 	}
@@ -1662,14 +1573,16 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[1]=0;
 //			HAL_UART_DMAStop(&huart2);
 
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[1]=0;
+//			RxData[0]=0;
+//		}
 		break;
 	case 0b10010011: //Go_Mode 3 FRAME#1
 		if(RxData[1] == 0b01101100){
@@ -1677,14 +1590,16 @@ void UART(){
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
+			RxData[1]=0;
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[1]=0;
+//			RxData[0]=0;
+//		}
 		break;
 	case 0b10010100: //Go_Mode 4 FRAME#2
 		HighByte = RxData[1];
@@ -1696,14 +1611,16 @@ void UART(){
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
+			RxData[3]=0;
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[3] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[3]=0;
+//			RxData[0]=0;
+//		}
 		break;
 	case 0b10010101: //Go_Mode 5 FRAME#2
 		HighByte = RxData[1];
@@ -1716,14 +1633,16 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[3]=0;
 			ModeN =0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[3] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[3]=0;
+//			RxData[0]=0;
+//		}
 		break;
 	case 0b10010110: //Go_Mode 6 FRAME#2
 		HighByte = RxData[1];
@@ -1738,13 +1657,15 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[3]=0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[3] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[3]=0;
+//		}
 		break;
 	case 0b10010111: //Go_Mode 7 FRAME#3
 		n_station_max = RxData[1];
@@ -1767,13 +1688,15 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[k]=0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[k] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[k]=0;
+//		}
 		break;
 	case 0b10011000: //Go_Mode 8 FRAME#1
 		if(RxData[1] == 0b01100111){
@@ -1782,14 +1705,16 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			Arm_State = PrepareRun;
+			RxData[1]=0;
 			RxData[0] = 0;
 //			HAL_UART_DMAStop(&huart2);
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011001: //Go_Mode 9 FRAME#1
 		if(RxData[1] == 0b01100110){
@@ -1815,6 +1740,7 @@ void UART(){
 //						HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //					}
 					RxData[0] = 0;
+					RxData[1]=0;
 					CheckTrasmit=1;
 					Finish =0;
 				}
@@ -1840,14 +1766,16 @@ void UART(){
 //					CheckTrasmit=1;
 //				}
 				RxData[0] = 0;
+				RxData[1]=0;
 				CheckTrasmit=1;
 			}
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011010: //Go_Mode 10 FRAME#1
 		if(RxData[1] == 0b01100101){
@@ -1878,6 +1806,7 @@ void UART(){
 ////					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //				}
 				RxData[0] = 0;
+				RxData[1]=0;
 				CheckTrasmit=1;
 				Finish =0;
 			}
@@ -1908,15 +1837,17 @@ void UART(){
 //				CheckTrasmit=1;
 //			}
 			RxData[0] = 0;
+			RxData[1]=0;
 			CheckTrasmit=1;
 		}
 
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011011: //Go_Mode 11 FRAME#1
 		if(RxData[1] == 0b01100100){
@@ -1943,6 +1874,7 @@ void UART(){
 ////					CheckTrasmit=1;
 //				}
 				RxData[0] = 0;
+				RxData[1]=0;
 				CheckTrasmit=1;
 				Finish =0;
 			}
@@ -1967,15 +1899,17 @@ void UART(){
 //				CheckTrasmit=1;
 //			}
 			RxData[0] = 0;
+			RxData[1]=0;
 			CheckTrasmit=1;
 		}
 
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011100: //Go_Mode 12 FRAME#1
 		if(RxData[1]==0b01100011){
@@ -1985,12 +1919,14 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[1]=0;
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011101: //Go_Mode 13 FRAME#1
 		if(RxData[1] == 0b01100010){
@@ -2000,13 +1936,14 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
-
+			RxData[1]=0;
 		}
-		else{
-			HAL_UART_DMAStop(&huart2);
-			HAL_UART_Receive_DMA(&huart2, RxData, 12);
-			RxData[0]=0;
-		}
+//		else if (RxData[1] != 0){
+//			HAL_UART_DMAStop(&huart2);
+//			HAL_UART_Receive_DMA(&huart2, RxData, 12);
+//			RxData[0]=0;
+//			RxData[1]=0;
+//		}
 		break;
 	case 0b10011110: //Go_Mode 14 FRAME#1
 		if(RxData[1] == 0b01100001){
@@ -2017,11 +1954,13 @@ void UART(){
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
 			RxData[0] = 0;
+			RxData[1]=0;
 		}
-		else{
+		else if (RxData[1] != 0){
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			RxData[0]=0;
+			RxData[1]=0;
 		}
 		break;
 	case 0:
@@ -2109,25 +2048,23 @@ void CheckEndEffector()
 }
 
 float TransferFunction(float u_tf){
-	float volt_base = 1.0;
 	u_i[0] = u_tf;
 	y_i[0] = 0.6524*y_i[1] + 157.5*u_i[1] - 306.8*u_i[2] + 151.9*u_i[3];
 	for(int i=2;i>=0;i--){
 		u_i[i+1]=u_i[i];
 		y_i[i+i]=y_i[i];
 	}
-
-//	if (t>t4 && PID_dir == 1 && 5.0*y_i[0] < volt_base)
-//	{
-//		return 1.0;
-//	}
-//
-//	else if (t>t4 && PID_dir == 0 && 5.0*y_i[0] > -volt_base)
-//	{
-//		return 1.0;
-//	}
-
 	return positive(y_i[0]);
+}
+
+float LowpassFilter(float Vin){
+	static float V_out[2] = {0,0};
+	static float V_in[2] = {0,0};
+	V_in[0]=Vin;
+	V_out[0]=0.9993*V_out[1] + 0.0006664*V_in[1];
+	V_out[1]=V_out[0];
+	V_in[1] = V_in[0];
+	return V_out[0];
 }
 
 /* USER CODE END 4 */
