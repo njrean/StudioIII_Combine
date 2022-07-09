@@ -60,6 +60,7 @@ float volt = 0;
 float volt_check = 0;
 float volt_constant = 0;
 float volt_statics = 0;
+uint32_t MotorTimestamp =0;
 
 //Set Flag and Status
 uint8_t SetHome_Flag = 0;
@@ -69,6 +70,7 @@ uint8_t TrajectoryGenerator_Flag = 0;
 uint8_t GenVolt_Flag = 0;
 uint8_t Emergency_status = 0;
 uint8_t trigger = 0;
+uint8_t Mass_Flag = 0;
 
 //ReadEncoder
 float Rads = 0;
@@ -94,6 +96,7 @@ float jerk_kalman = 0;
 float dt = 0.001;
 
 //Low Pass
+float omega = 0;
 float alpha = 0;
 
 arm_matrix_instance_f32 I;
@@ -186,9 +189,17 @@ float kp_2_m = 0.002;
 float ki_2_m = 0.04;
 float kd_2_m = 0;
 
+float upperbreak = 0.007;
+float lowerbreak = 0.007;
+float masslimit_CCW =0;
+float masslimit_CW = 0;
+float Backlash =0;
+
+float volt_mass = 0;
 
 //Set Home
 uint8_t SetZeroState = 1;
+uint32_t HomeDelay = 1050000;
 
 //UART Variable
 uint16_t UARTDelay = 95;
@@ -207,6 +218,14 @@ uint8_t Finish =0;
 
 //Station Main loop
 float station[10] = {0,5,10,15,20,90,180,270,275,355};
+float rad_station[72] = {0, 0.08898, 0.17642, 0.26310, 0.34979, 0.43723, 0.52468, 0.61213, 0.70034,
+						 0.78779, 0.87677, 0.96345, 1.05013, 1.13681, 1.22349, 1.31094, 1.39762, 1.48584,
+						 1.57252, 1.66073, 1.74818, 1.83409, 1.92077, 2.00669, 2.09413, 2.18081, 2.26750,
+						 2.3571, 2.44316, 2.53061, 2.61729, 2.70397, 2.78988, 2.87733, 2.96324, 3.05146,
+						 3.13814, 3.22635, 3.31457, 3.40048, 3.48716, 3.57307, 3.65975, 3.74643, 3.83465,
+						 3.92210, 4.01108, 4.09776, 4.18521, 4.27035, 4.35780, 4.44525, 4.53269, 4.62014,
+						 4.70836, 4.79580, 4.88479, 4.97147, 5.05815, 5.14559, 5.23304, 5.32049, 5.40794,
+						 5.49538, 5.58513, 5.67258, 5.75926, 5.84594, 5.93339, 6.02084, 6.10752, 6.19727 };
 uint8_t Current_station=1;
 uint8_t index_station[16];
 uint8_t n_station_max=1;
@@ -232,14 +251,19 @@ static enum
 
 //For Experiment
 uint32_t timestamp = 0;
+uint64_t HomeTimestamp = 0;
 uint8_t dir = 1;
 uint8_t PID_dir = 1;
+float error1 =0;
+float error2 =0;
+float theta_Stamp =0;
+uint16_t theta_count =0;
+uint8_t Motor0_Flag =0;
 //static uint8_t state = 0;
 
 //TransferFunction
 float u_i[4];
 float y_i[4];
-
 float volt_buff = 0;
 
 /* USER CODE END PV */
@@ -302,6 +326,7 @@ void CheckEndEffector();
 float TransferFunction(float u_tf);
 
 float LowpassFilter(float Vin);
+float LowpassFilter2(float Vin);
 
 
 /* USER CODE END PFP */
@@ -377,12 +402,16 @@ int main(void)
 	  switch (Arm_State) {
 		case Main:
 			UART();
+			HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
+			error1 = positive(theta_now - theta_0 - 0.0872665);
+			error2 = positive(theta_now - theta_f);
 			break;
 		case Home:
 			UART();
 			ReadEncoder();
 			SetHome();
 			kalmanfilter();
+			HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_RESET);
 			break;
 		case Emergency:
 			UART();
@@ -396,6 +425,7 @@ int main(void)
 			break;
 		case Setzero:
 			UART();
+
 			if(micros() - timestamp > 2000000){
 				if (SetZeroState)
 				{
@@ -404,11 +434,14 @@ int main(void)
 					angle = 0;
 					theta_now = 0;
 				}
+				HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_SET);
 				Arm_State = Main;
 			 }
 
 			break;
 		case PrepareRun:
+			Finish=0;
+			HAL_GPIO_WritePin(PilotLamp_GPIO_Port, PilotLamp_Pin, GPIO_PIN_RESET);
 			UART();
 			TrajectoryGenerator_Flag=1;
 			TrajectoryGenerator();
@@ -429,7 +462,8 @@ int main(void)
 					}
 					Arm_State = EndEffector;
 					FlagOpen_EndEffector =1;
-					theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
+//					theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
+					theta_f = rad_station[(uint8_t)floor(station[index_station[n_station]-1]/5)];
 				}
 				else{
 					Arm_State = EndEffector;
@@ -926,7 +960,7 @@ void SetHome()
 
 	if(SetHome_Flag == 1)
 	{
-		volt = 5;
+		volt = 6 - volt_mass;
 		RunMotor(volt, counterclockwise);
 		AlSet_Flag = 1;
 		SetHome_Flag = 0;
@@ -934,10 +968,28 @@ void SetHome()
 
 	else if(SetHome_Flag == 2)
 	{
-		volt = 3.7;
-		RunMotor(volt, counterclockwise);
-		AlSet_Flag = 0;
-		SetHome_Flag = 0;
+		if(Mass_Flag == 1){
+			if(micros() - HomeTimestamp >= HomeDelay){
+				volt  =0;
+				RunMotor(volt, counterclockwise);
+				SetHome_Flag = 0;
+				AlSet_Flag = 2;
+				timestamp = micros();
+				Arm_State = Setzero;
+			}
+			else{
+				volt = 3.8;
+				RunMotor(volt, counterclockwise);
+			}
+
+		}
+		else{
+			volt  = 3.8;
+			RunMotor(volt, counterclockwise);
+			AlSet_Flag = 0;
+			SetHome_Flag = 0;
+		}
+
 	}
 }
 
@@ -956,6 +1008,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	else if (GPIO_Pin == Proximity_Pin && AlSet_Flag == 1)
 	{
 		SetHome_Flag = 2;
+		HomeTimestamp = micros();
 	}
 
 	if (GPIO_Pin == B1_Pin)
@@ -994,12 +1047,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		ReadEncoder();
 		TrajectoryEvaluation();
 		kalmanfilter();
-		alpha = LowpassFilter(alpha_kalman);
+
+		omega = LowpassFilter(omega_kalman);
+		alpha = LowpassFilter2(alpha_kalman);
+
 		volt = Cascade(theta_ref, position_kalman, omega_ref, omega_kalman);
 
 		t+=dt;
 
-		if (theta_now >= (theta_f - 0.007) && theta_now <= (theta_f + 0.007))
+		if (theta_now >= (theta_f - upperbreak) && theta_now <= (theta_f + lowerbreak))
 		{
 			volt = 0;
 			RunMotor(volt, PID_dir);
@@ -1014,7 +1070,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	{
 		ReadEncoder();
 		kalmanfilter();
-		alpha = LowpassFilter(alpha_kalman);
+
+		omega = LowpassFilter(omega_kalman);
+		alpha = LowpassFilter2(alpha_kalman);
 	}
 
 	if (htim == &htim11)
@@ -1196,8 +1254,117 @@ void TrajectoryGenerator()
 			dir = 1;
 		}
 
+		//add Mass 1 kg
+		if(Mass_Flag){
+			volt_mass = 0.5;
+		}
+		else{
+			volt_mass = 0;
+
+		}
+
+
+		if(theta_f <= rad_station[1]){ //0-5 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 3.1+volt_mass;
+				volt_statics = 3.6+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 3.3+volt_mass;
+				volt_statics = 3.6+volt_mass;
+			}
+
+			masslimit_CCW = 0.013;
+			masslimit_CW = 0.01;
+		}
+		else if(theta_f <= rad_station[5]){ //5 - 25 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 3.1+volt_mass;
+				volt_statics = 3.6+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 3.1+volt_mass; //35
+				volt_statics = 3.6+volt_mass;
+			}
+
+			masslimit_CCW = 0.013;
+			masslimit_CW = 0.01;
+		}
+		else if(theta_f <= rad_station[12]){ //25-60 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 4.0+volt_mass;
+				volt_statics = 4.3+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 4.0+volt_mass; //35
+				volt_statics = 4.3+volt_mass;
+			}
+
+			masslimit_CCW = 0.013;
+			masslimit_CW = 0.01;
+		}
+
+		else if(theta_f <= rad_station[17]){ //60-85 degree
+			volt_constant = 5+volt_mass;
+			volt_statics = 5.5+volt_mass;
+
+			masslimit_CCW = 0.013;
+			masslimit_CW = 0.008;
+		}
+
+		else if(theta_f <= rad_station[45]){ //85-225 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 5.5+volt_mass;
+				volt_statics = 6.0+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 5+volt_mass;
+				volt_statics = 5.5+volt_mass;
+			}
+
+			masslimit_CCW = 0.012;
+			masslimit_CW = 0.018;
+		}
+		else if(theta_f <= rad_station[55]){ //230-275 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 5.5+volt_mass;
+				volt_statics = 6.0+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 5.6+volt_mass;
+				volt_statics = 6+volt_mass;
+			}
+
+			masslimit_CCW = 0.012;
+			masslimit_CW = 0.018;
+		}
+		else { //280-355 degree
+			if (dir == 1){ //clockwise
+				volt_constant = 4.0+volt_mass;
+				volt_statics = 4.5+volt_mass;
+			}
+
+			else { //counterclockwise
+				volt_constant = 4.0+volt_mass;
+				volt_statics = 4.5+volt_mass;
+			}
+
+			masslimit_CCW = 0.012;
+			masslimit_CW = 0.01;
+		}
+		if(!Mass_Flag){
+			masslimit_CCW = 0;
+			masslimit_CW = 0;
+		}
+
+
 		//Change Cascade Gain
-		if (theta_dest >= 6.0737)
+		if (theta_dest >= 6.0737) //more than 349 degree
 		{
 			kp_1 = 0;
 			ki_1 = 0;
@@ -1209,10 +1376,14 @@ void TrajectoryGenerator()
 
 			j_max = 0.6;
 
+			upperbreak = 0.007 + masslimit_CW;
+			lowerbreak = 0.007 + masslimit_CCW;
+
 			TrajectoryEvaluationFlag =1;
+
 		}
 
-		else if(theta_dest <= 0.524){
+		else if(theta_dest <= 0.524){ // less than 30 degree
 			kp_1 = 0;
 			ki_1 = 0;
 			kd_1 = 0;
@@ -1222,6 +1393,9 @@ void TrajectoryGenerator()
 			kd_2 = 0;
 
 			j_max = 0.4;
+
+			upperbreak = 0.008 + masslimit_CW;
+			lowerbreak = 0.009 + masslimit_CCW;
 
 			TrajectoryEvaluationFlag = 0;
 		}
@@ -1236,6 +1410,9 @@ void TrajectoryGenerator()
 			kd_2 = kd_2_m;
 
 			j_max = 0.4;
+
+			upperbreak = 0.007 + masslimit_CW;
+			lowerbreak = 0.007 + masslimit_CCW;
 
 			TrajectoryEvaluationFlag = 1;
 		}
@@ -1352,28 +1529,42 @@ void TrajectoryGenerator()
 		a[5] = a[4];
 
 		//Check Volt Constant
-		if(theta_f <= 1.6){ //90 degree
-			volt_constant = 2.5; //2.9;
-			volt_statics = 3.5;
-		}
-		else if(theta_f <= 3.13){ //180 degree
-			volt_constant = 3.5;//4.0;
-			volt_statics = 4.0;
-		}
+//		if(theta_f <= 1.6){ //0-90 degree
+//			volt_constant = 2.4; //2.5  2.9;
+//			volt_statics = 3.2; //3.5
+//		}
+//		else if(theta_f <= 2.19){ //95-125 degree
+//			volt_constant = 2.5;//4.0;
+//			volt_statics = 3.4; //3.5
+//		}
+//		else if(theta_f <= 2.45){ //125-145 degree
+//			volt_constant = 2.8;//4.0;
+//			volt_statics = 3.4; //3.5
+//		}
+//
+//		else if(theta_f <= 3.13){ //145-180 degree
+//			volt_constant = 3.1;//4.0;
+//			volt_statics = 3.7; //3.5
+//		}
+//
+//		else if(theta_f <= 4.36){ //180-250 degree
+//			volt_constant = 3.4;//4.35;
+//			volt_statics = 3.8;
+//		}
+//
+//		else if(theta_f <= 4.72){ //250-270 degree
+//			volt_constant = 3.8;//4.35;
+//			volt_statics = 4.0;
+//		}
+//		else{//270-360 degree
+//			volt_constant = 3.4;//3.9;
+//			volt_statics = 3.8;
+//		}
 
-		else if(theta_f <= 4.36){ //250 degree
-			volt_constant = 3.4;//4.35;
-			volt_statics = 4.6;
-		}
 
-		else if(theta_f <= 4.72){ //270 degree
-			volt_constant = 3.8;//4.35;
-			volt_statics = 4.6;
-		}
-		else{
-			volt_constant = 3.4;//3.9;
-			volt_statics = 4.0;
-		}
+
+
+
 
 		//Set Flag to Go
 		TrajectoryGenerator_Flag = 0;
@@ -1400,8 +1591,6 @@ void TrajectoryGenerator()
 
 void TrajectoryEvaluation()
 {
-	if(TrajectoryEvaluationFlag == 1){
-
 	if( 0 <= t && t < t1){
 		theta_ref = theta_0 + (1.0/6.0)*j_max*pow(t,3.0);
 		omega_ref = 0.5*j_max*pow(t,2.0);
@@ -1456,7 +1645,7 @@ void TrajectoryEvaluation()
 //			RunMotor(volt, PID_dir);
 //			Go_Flag = 0;
 //		}
-	}
+
 }
 
 float PositionController(float r,float y) //r == trajectory, y==feedback
@@ -1518,17 +1707,48 @@ float Cascade(float Pd,float P,float Vd,float V){
 	{
 		PID_dir = dir;
 		if(theta_now == theta_0){
-			RunMotor(0.0, PID_dir);
+//			RunMotor(0.0, PID_dir);
 			u = volt_statics;
-			volt_statics += 0.0001;
+			volt_statics += 0.0005;
+//			if(micors() - MotorTimestamp >= 500000){
+//
+//			}
+//			else{
+//
+//			}
 		}
 		else{
-			u = volt_constant;
+			if(theta_count>= 1500){
+				if(MotorTimestamp < 400){
+					MotorTimestamp++;
+				}
+				else if(Motor0_Flag){
+					u = volt_constant;
+					volt_constant += 0.2;
+					Motor0_Flag =0;
+					MotorTimestamp = 0;
+				}
+				else{
+					Motor0_Flag =1;
+					u = 0;
+					MotorTimestamp = 0;
+				}
+
+			}
+			else{
+				u = volt_constant;
+			}
+			if(theta_now == theta_Stamp){
+				theta_count +=1;
+			}
+			else{
+				theta_count =0;
+			}
 
 		}
 
 	}
-
+	theta_Stamp = theta_now;
 	return limit(u);
 }
 
@@ -1629,6 +1849,7 @@ void UART(){
 		if(RxData[3] == (uint8_t)(~(0b10010101 + HighByte + LowByte))){
 			//Set Angular Position
 			theta_f = (double)DataByte/10000.0;
+			theta_f = rad_station[(uint8_t)floor(theta_f/0.087)];
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
@@ -1651,7 +1872,8 @@ void UART(){
 		if(RxData[3] == (uint8_t)(~(0b10010110 + HighByte + LowByte))){
 			//Set Goal 1 Station
 			index_station[0] = LowByte;
-			theta_f = station[index_station[0]-1]*(M_PI/180.0);
+			theta_f = rad_station[(uint8_t)floor(station[index_station[0]-1]/5)];
+//			theta_f = station[index_station[0]-1]*(M_PI/180.0);
 			ModeN =0;
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
@@ -1683,7 +1905,8 @@ void UART(){
 
 			ModeN=1;
 			n_station=0;
-			theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
+//			theta_f = station[index_station[n_station]-1]*(M_PI/180.0);
+			theta_f = rad_station[(uint8_t)floor(station[index_station[n_station]-1]/5)];
 			HAL_UART_DMAStop(&huart2);
 			HAL_UART_Receive_DMA(&huart2, RxData, 12);
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)ack1, 2); //send ack#1
@@ -1730,6 +1953,10 @@ void UART(){
 					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 					HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 //					Timestamp_UI=micros();
+					RxData[0] = 0;
+					RxData[1]=0;
+					CheckTrasmit=1;
+					Finish =0;
 				}
 				else{
 //					if(micros() - Timestamp_UI > UARTDelay){
@@ -1739,17 +1966,17 @@ void UART(){
 //						HAL_UART_DMAStop(&huart2);
 //						HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //					}
-					RxData[0] = 0;
-					RxData[1]=0;
-					CheckTrasmit=1;
-					Finish =0;
+//					RxData[0] = 0;
+//					RxData[1]=0;
+//					CheckTrasmit=1;
+//					Finish =0;
 				}
 
 			}
 			else if(CheckTrasmit){
 				TxData[2] = 0b10011001;
 				TxData[3] = 0;
-				Current_station = (uint8_t)ceil(theta_now/0.087); // 1 station = 0.087 rads ->72 station
+				Current_station = (uint8_t)floor(theta_now/0.087); // 1 station = 0.087 rads ->72 station
 				TxData[4] = Current_station;
 				TxData[5] = (uint8_t)(~(TxData[2] + TxData[3] + TxData[4]));
 				HAL_UART_DMAStop(&huart2); //
@@ -1757,6 +1984,9 @@ void UART(){
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 //				Timestamp_UI=micros();
 				CheckTrasmit=0;
+				RxData[0] = 0;
+				RxData[1]=0;
+				CheckTrasmit=1;
 			}
 			else{
 //				if(micros() - Timestamp_UI > UARTDelay){
@@ -1765,9 +1995,9 @@ void UART(){
 //					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //					CheckTrasmit=1;
 //				}
-				RxData[0] = 0;
-				RxData[1]=0;
-				CheckTrasmit=1;
+//				RxData[0] = 0;
+//				RxData[1]=0;
+//				CheckTrasmit=1;
 			}
 		}
 //		else if (RxData[1] != 0){
@@ -1796,6 +2026,10 @@ void UART(){
 				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 //				Timestamp_UI=micros();
+				RxData[0] = 0;
+				RxData[1]=0;
+				CheckTrasmit=1;
+				Finish =0;
 			}
 			else{
 //				if(micros() - Timestamp_UI > UARTDelay){
@@ -1805,10 +2039,10 @@ void UART(){
 ////					HAL_UART_DMAStop(&huart2);
 ////					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //				}
-				RxData[0] = 0;
-				RxData[1]=0;
-				CheckTrasmit=1;
-				Finish =0;
+//				RxData[0] = 0;
+//				RxData[1]=0;
+//				CheckTrasmit=1;
+//				Finish =0;
 			}
 		}
 		else if(CheckTrasmit){
@@ -1828,6 +2062,9 @@ void UART(){
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 //			Timestamp_UI=micros();
 			CheckTrasmit=0;
+			RxData[0] = 0;
+			RxData[1]=0;
+			CheckTrasmit=1;
 		}
 		else{
 //			if(micros() - Timestamp_UI > UARTDelay){
@@ -1836,9 +2073,9 @@ void UART(){
 ////				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //				CheckTrasmit=1;
 //			}
-			RxData[0] = 0;
-			RxData[1]=0;
-			CheckTrasmit=1;
+//			RxData[0] = 0;
+//			RxData[1]=0;
+//			CheckTrasmit=1;
 		}
 
 		}
@@ -1863,6 +2100,10 @@ void UART(){
 				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 				HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData2, 8); //send ack#1
 //				Timestamp_UI=micros();
+				RxData[0] = 0;
+				RxData[1]=0;
+				CheckTrasmit=1;
+				Finish =0;
 			}
 			else{
 //				if(micros() - Timestamp_UI > UARTDelay){
@@ -1873,10 +2114,10 @@ void UART(){
 ////					HAL_UART_Receive_DMA(&huart2, RxData, 12);
 ////					CheckTrasmit=1;
 //				}
-				RxData[0] = 0;
-				RxData[1]=0;
-				CheckTrasmit=1;
-				Finish =0;
+//				RxData[0] = 0;
+//				RxData[1]=0;
+//				CheckTrasmit=1;
+//				Finish =0;
 			}
 		}
 		else if (CheckTrasmit){
@@ -1890,6 +2131,9 @@ void UART(){
 			HAL_UART_Transmit_DMA(&huart2, (uint8_t*)TxData, 6);
 //			Timestamp_UI=micros();
 			CheckTrasmit=0;
+			RxData[0] = 0;
+			RxData[1]=0;
+			CheckTrasmit=1;
 		}
 		else{
 //			if(micros() - Timestamp_UI > UARTDelay){
@@ -1898,9 +2142,9 @@ void UART(){
 ////				HAL_UART_Receive_DMA(&huart2, RxData, 12);
 //				CheckTrasmit=1;
 //			}
-			RxData[0] = 0;
-			RxData[1]=0;
-			CheckTrasmit=1;
+//			RxData[0] = 0;
+//			RxData[1]=0;
+//			CheckTrasmit=1;
 		}
 
 		}
@@ -2058,6 +2302,16 @@ float TransferFunction(float u_tf){
 }
 
 float LowpassFilter(float Vin){
+	static float V_out[2] = {0,0};
+	static float V_in[2] = {0,0};
+	V_in[0]=Vin;
+	V_out[0]=0.9993*V_out[1] + 0.0006664*V_in[1];
+	V_out[1]=V_out[0];
+	V_in[1] = V_in[0];
+	return V_out[0];
+}
+
+float LowpassFilter2(float Vin){
 	static float V_out[2] = {0,0};
 	static float V_in[2] = {0,0};
 	V_in[0]=Vin;
